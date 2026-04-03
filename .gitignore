@@ -1,0 +1,22 @@
+# Local OpenBao repo (SDK source + bao binary)
+openbao/
+
+# Cloned upstream vault-gpg-plugin for reference
+references/
+
+# Plugin build output
+openbao-plugin-secrets-gpg/dist/
+
+# Test-bed runtime artifacts
+test-bed/openbao-instance/data/
+test-bed/openbao-instance/logs/
+test-bed/openbao-instance/plugins/
+
+# GPG keyring state (keep the exported .asc files, ignore gpg internals)
+test-bed/test-pgp-keys/pubring.kbx
+test-bed/test-pgp-keys/pubring.kbx~
+test-bed/test-pgp-keys/trustdb.gpg
+test-bed/test-pgp-keys/openpgp-revocs.d/
+test-bed/test-pgp-keys/private-keys-v1.d/
+test-bed/test-pgp-keys/.gpg-v21-migrated
+test-bed/test-pgp-keys/random_seed
