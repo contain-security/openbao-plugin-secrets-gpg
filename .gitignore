@@ -11,6 +11,8 @@ openbao-plugin-secrets-gpg/dist/
 test-bed/openbao-instance/data/
 test-bed/openbao-instance/logs/
 test-bed/openbao-instance/plugins/
+test-bed/openbao-instance/server.pid
+test-bed/openbao-instance/init.json
 
 # GPG keyring state (keep the exported .asc files, ignore gpg internals)
 test-bed/test-pgp-keys/pubring.kbx
