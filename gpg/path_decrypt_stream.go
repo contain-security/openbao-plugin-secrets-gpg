@@ -106,6 +106,30 @@ func pathDecryptStreamFinalize(b *backend) *framework.Path {
 	}
 }
 
+// limitedWriter wraps an io.Writer and stops accepting data once a byte cap
+// is exceeded. Unlike io.LimitReader, this prevents any over-limit data from
+// reaching the underlying writer.
+type limitedWriter struct {
+	w         io.Writer
+	remaining int64
+	exceeded  bool
+}
+
+var errPlaintextTooLarge = fmt.Errorf("decrypted plaintext exceeds maximum size")
+
+func (lw *limitedWriter) Write(p []byte) (int, error) {
+	if lw.exceeded {
+		return 0, errPlaintextTooLarge
+	}
+	if int64(len(p)) > lw.remaining {
+		lw.exceeded = true
+		return 0, errPlaintextTooLarge
+	}
+	n, err := lw.w.Write(p)
+	lw.remaining -= int64(n)
+	return n, err
+}
+
 // bufferedPipeWriter is a non-blocking writer that buffers data and feeds it
 // to an io.PipeWriter via a background goroutine. This prevents deadlocks
 // when both the writer and reader sides of a pipe are driven from the same
@@ -306,8 +330,18 @@ func (b *backend) pathDecryptStreamStartWrite(ctx context.Context, req *logical.
 
 		readyOnce.Do(func() { close(readySignal) })
 
-		// Copy decrypted body to the output buffer
-		if _, err := io.Copy(lw, md.UnverifiedBody); err != nil {
+		// Copy decrypted body to the output buffer with size limit.
+		// The limitedWriter wraps lw and refuses writes once the cap is hit,
+		// so no data beyond the limit is buffered or returned to the client.
+		limited := &limitedWriter{w: lw, remaining: defaultMaxPlaintextSize}
+		_, err = io.Copy(limited, md.UnverifiedBody)
+		if limited.exceeded {
+			decState.outputMu.Lock()
+			decState.goroutineErr = fmt.Errorf("decrypted plaintext exceeds maximum size")
+			decState.outputMu.Unlock()
+			return
+		}
+		if err != nil {
 			decState.outputMu.Lock()
 			decState.goroutineErr = fmt.Errorf("decryption error: %w", err)
 			decState.outputMu.Unlock()

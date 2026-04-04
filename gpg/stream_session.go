@@ -19,7 +19,8 @@ import (
 const (
 	defaultSessionTimeout    = 5 * time.Minute
 	defaultMaxSessions       = 64
-	defaultMaxChunkSize      = 4 * 1024 * 1024 // 4MB decoded
+	defaultMaxChunkSize      = 4 * 1024 * 1024  // 4MB decoded
+	defaultMaxPlaintextSize  = 32 * 1024 * 1024 // 32MB — limit on decrypted plaintext to prevent decompression bombs
 	sessionCleanupInterval   = 30 * time.Second
 )
 

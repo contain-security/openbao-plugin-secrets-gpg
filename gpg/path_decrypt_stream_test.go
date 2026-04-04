@@ -350,6 +350,45 @@ func TestGPG_DecryptStreamWithSigner(t *testing.T) {
 	}
 }
 
+func TestLimitedWriter(t *testing.T) {
+	var buf bytes.Buffer
+	lw := &limitedWriter{w: &buf, remaining: 10}
+
+	// Write within limit
+	n, err := lw.Write([]byte("hello"))
+	if err != nil || n != 5 {
+		t.Fatalf("expected 5 bytes written, got %d, err: %v", n, err)
+	}
+
+	// Write that exactly exhausts remaining
+	n, err = lw.Write([]byte("world"))
+	if err != nil || n != 5 {
+		t.Fatalf("expected 5 bytes written, got %d, err: %v", n, err)
+	}
+
+	// Write past limit
+	n, err = lw.Write([]byte("x"))
+	if err == nil {
+		t.Fatal("expected error when exceeding limit")
+	}
+	if !lw.exceeded {
+		t.Fatal("expected exceeded=true")
+	}
+	if n != 0 {
+		t.Fatalf("expected 0 bytes written past limit, got %d", n)
+	}
+
+	// Subsequent writes also fail
+	n, err = lw.Write([]byte("more"))
+	if err == nil || n != 0 {
+		t.Fatal("expected continued failure after exceeded")
+	}
+
+	if buf.String() != "helloworld" {
+		t.Fatalf("expected 'helloworld' in buffer, got '%s'", buf.String())
+	}
+}
+
 func TestGPG_DecryptStreamErrors(t *testing.T) {
 	b := Backend()
 	b.streamSessions = newSessionStore()
