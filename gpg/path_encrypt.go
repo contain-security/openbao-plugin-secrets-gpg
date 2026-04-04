@@ -31,9 +31,37 @@ func pathEncrypt(b *backend) *framework.Path {
 				Default:     "base64",
 				Description: `Encoding format for the ciphertext output. Can be "base64" or "ascii-armor". Defaults to "base64".`,
 			},
-			"signer_key_name": {
+		},
+		Operations: map[logical.Operation]framework.OperationHandler{
+			logical.UpdateOperation: &framework.PathOperation{
+				Callback: b.pathEncryptWrite,
+			},
+		},
+		HelpSynopsis:    pathEncryptHelpSyn,
+		HelpDescription: pathEncryptHelpDesc,
+	}
+}
+
+func pathEncryptWithSigner(b *backend) *framework.Path {
+	return &framework.Path{
+		Pattern: "encrypt/" + framework.GenericNameRegex("name") + "/sign/" + framework.GenericNameRegex("signer_name"),
+		Fields: map[string]*framework.FieldSchema{
+			"name": {
 				Type:        framework.TypeString,
-				Description: "Name of another GPG key stored in OpenBao to sign the message with. If present, the message will be signed and encrypted.",
+				Description: "The key to encrypt to",
+			},
+			"signer_name": {
+				Type:        framework.TypeString,
+				Description: "The GPG key to sign the message with (from URL path)",
+			},
+			"plaintext": {
+				Type:        framework.TypeString,
+				Description: "The base64-encoded plaintext to encrypt",
+			},
+			"format": {
+				Type:        framework.TypeString,
+				Default:     "base64",
+				Description: `Encoding format for the ciphertext output. Can be "base64" or "ascii-armor". Defaults to "base64".`,
 			},
 		},
 		Operations: map[logical.Operation]framework.OperationHandler{
@@ -77,7 +105,7 @@ func (b *backend) pathEncryptWrite(ctx context.Context, req *logical.Request, da
 
 	// Optionally load a signer key
 	var signerEntity *openpgp.Entity
-	signerKeyName := data.Get("signer_key_name").(string)
+	signerKeyName := resolveSignerKeyName(data)
 	if signerKeyName != "" {
 		signerEntry, err := b.key(ctx, req.Storage, signerKeyName)
 		if err != nil {

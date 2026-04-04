@@ -33,9 +33,37 @@ func pathShowSessionKey(b *backend) *framework.Path {
 				Default:     "base64",
 				Description: `Encoding format the ciphertext uses. Can be "base64" or "ascii-armor". Defaults to "base64".`,
 			},
-			"signer_key_name": {
+		},
+		Operations: map[logical.Operation]framework.OperationHandler{
+			logical.UpdateOperation: &framework.PathOperation{
+				Callback: b.pathShowSessionKeyWrite,
+			},
+		},
+		HelpSynopsis:    pathDecryptSessionKeyHelpSyn,
+		HelpDescription: pathDecryptSessionKeyHelpDesc,
+	}
+}
+
+func pathShowSessionKeyWithSigner(b *backend) *framework.Path {
+	return &framework.Path{
+		Pattern: "show-session-key/" + framework.GenericNameRegex("name") + "/sign/" + framework.GenericNameRegex("signer_name"),
+		Fields: map[string]*framework.FieldSchema{
+			"name": {
 				Type:        framework.TypeString,
-				Description: "Name of a GPG key stored in OpenBao whose public key is used to verify the signature on the ciphertext. If present, the signature must be valid.",
+				Description: "The key to use",
+			},
+			"signer_name": {
+				Type:        framework.TypeString,
+				Description: "The GPG key to verify the signature against (from URL path)",
+			},
+			"ciphertext": {
+				Type:        framework.TypeString,
+				Description: "The ciphertext to decrypt",
+			},
+			"format": {
+				Type:        framework.TypeString,
+				Default:     "base64",
+				Description: `Encoding format the ciphertext uses. Can be "base64" or "ascii-armor". Defaults to "base64".`,
 			},
 		},
 		Operations: map[logical.Operation]framework.OperationHandler{
@@ -71,7 +99,7 @@ func (b *backend) pathShowSessionKeyWrite(ctx context.Context, req *logical.Requ
 		return nil, err
 	}
 
-	signerKeyName := data.Get("signer_key_name").(string)
+	signerKeyName := resolveSignerKeyName(data)
 	if signerKeyName != "" {
 		signerEntry, err := b.key(ctx, req.Storage, signerKeyName)
 		if err != nil {

@@ -18,12 +18,12 @@ PLAINTEXT_B64=$(echo -n "$PLAINTEXT" | base64)
 # Helper: non-streaming encrypt → binary ciphertext file
 plugin_encrypt_to_file() {
     local key="$1" plaintext_b64="$2" outfile="$3" signer="${4:-}"
-    local signer_arg=""
-    [ -n "$signer" ] && signer_arg="signer_key_name=$signer"
+    local enc_path="gpg/encrypt/$key"
+    [ -n "$signer" ] && enc_path="gpg/encrypt/$key/sign/$signer"
 
     echo -n "$plaintext_b64" > "$TMPDIR/_pt.b64"
     local ct_b64
-    ct_b64=$($BAO write -field=ciphertext "gpg/encrypt/$key" plaintext=@"$TMPDIR/_pt.b64" format=base64 $signer_arg 2>&1)
+    ct_b64=$($BAO write -field=ciphertext "$enc_path" plaintext=@"$TMPDIR/_pt.b64" format=base64 2>&1)
     echo -n "$ct_b64" | base64 -d > "$outfile"
 }
 
@@ -67,11 +67,11 @@ stream_decrypt_file() {
 
     dd if="$infile" bs=1 count=$first_chunk_end 2>/dev/null | base64 -w0 > "$TMPDIR/_first.b64"
 
-    local signer_arg=""
-    [ -n "$signer" ] && signer_arg="signer_key_name=$signer"
+    local start_path="gpg/decrypt-stream/$key/start"
+    [ -n "$signer" ] && start_path="gpg/decrypt-stream/$key/sign/$signer/start"
 
     local start_resp sid
-    start_resp=$($BAO write -format=json "gpg/decrypt-stream/$key/start" data=@"$TMPDIR/_first.b64" $signer_arg 2>&1)
+    start_resp=$($BAO write -format=json "$start_path" data=@"$TMPDIR/_first.b64" 2>&1)
     sid=$(echo "$start_resp" | jq -r '.data.session_id')
     echo -n "$(echo "$start_resp" | jq -r '.data.data')" | base64 -d > "$outfile"
 
@@ -127,8 +127,8 @@ assert_eq "$ORIGINAL_HASH" "$RECOVERED_HASH" "50KB file SHA-256 match"
 # --- With signer verification ---
 begin_test "Stream decrypt with signer verification"
 echo -n "$PLAINTEXT_B64" > "$TMPDIR/_pt.b64"
-CT_B64=$($BAO write -field=ciphertext gpg/encrypt/stream-dec-test \
-    plaintext=@"$TMPDIR/_pt.b64" format=base64 signer_key_name=stream-dec-signer 2>&1)
+CT_B64=$($BAO write -field=ciphertext gpg/encrypt/stream-dec-test/sign/stream-dec-signer \
+    plaintext=@"$TMPDIR/_pt.b64" format=base64 2>&1)
 echo -n "$CT_B64" | base64 -d > "$TMPDIR/ct_signed.bin"
 
 FIN=$(stream_decrypt_file "stream-dec-test" "$TMPDIR/ct_signed.bin" "$TMPDIR/pt_signed.bin" "stream-dec-signer")

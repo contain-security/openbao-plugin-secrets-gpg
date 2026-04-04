@@ -27,14 +27,17 @@ func TestGPG_ShowSessionKey(t *testing.T) {
 	}
 
 	showSessionKey := func(keyName, ciphertext, format, signerKey, expected string) {
+		path := "show-session-key/" + keyName
+		if signerKey != "" {
+			path = "show-session-key/" + keyName + "/sign/" + signerKey
+		}
 		reqDecrypt := &logical.Request{
 			Storage:   storage,
 			Operation: logical.UpdateOperation,
-			Path:      "show-session-key/" + keyName,
+			Path:      path,
 			Data: map[string]interface{}{
 				"ciphertext": ciphertext,
 				"format":     format,
-				"signer_key_name": signerKey,
 			},
 		}
 
@@ -60,7 +63,7 @@ func TestGPG_ShowSessionKey(t *testing.T) {
 
 	showSessionKey("test", encryptedSessionMessageASCIIArmored, "ascii-armor", "", "9:BDF8F7A2A573556C1E7D2FE9ADDCA7188C451C60B5311025F2A900E9FC61809E")
 	showSessionKey("test", encryptedSessionMessageBase64Encoded, "base64", "", "9:EC211D19FA4FFC7F88B6AC6A1112C88032910753AB52FEF10C71D850A721151C")
-	// Signed+encrypted message test removed: signer_key_name API requires key in storage, not inline public key
+	// Signed+encrypted message test removed: signer API requires key in storage, not inline public key
 	showSessionKey("test", encryptedSessionMessageASCIIArmored[:398], "ascii-armor", "", "9:BDF8F7A2A573556C1E7D2FE9ADDCA7188C451C60B5311025F2A900E9FC61809E")
 	showSessionKey("test", encryptedSessionMessageBase64EncodedWithMultipleKeys, "base64", "", "9:F8054D6D0F6E9C89155B829BC71E0613472EA70E32B9DA7893960536B04BB2BD")
 }
@@ -99,14 +102,17 @@ func TestGPG_ShowSessionKeyError(t *testing.T) {
 	}
 
 	showSessionKeyMustFail := func(keyName, ciphertext, format, signerKey string) {
+		path := "show-session-key/" + keyName
+		if signerKey != "" {
+			path = "show-session-key/" + keyName + "/sign/" + signerKey
+		}
 		reqDecrypt := &logical.Request{
 			Storage:   storage,
 			Operation: logical.UpdateOperation,
-			Path:      "show-session-key/" + keyName,
+			Path:      path,
 			Data: map[string]interface{}{
 				"ciphertext": ciphertext,
 				"format":     format,
-				"signer_key_name": signerKey,
 			},
 		}
 

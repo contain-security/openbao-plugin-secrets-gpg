@@ -248,11 +248,11 @@ func TestGPG_EncryptStreamWithSigner(t *testing.T) {
 
 	plaintext := []byte("Signed and encrypted data")
 
-	// Start with signer
+	// Start with signer via URL path
 	req = &logical.Request{
 		Storage: storage, Operation: logical.UpdateOperation,
-		Path: "encrypt-stream/recipient/start", ClientToken: "test-token",
-		Data: map[string]interface{}{"signer_key_name": "signer"},
+		Path: "encrypt-stream/recipient/sign/signer/start", ClientToken: "test-token",
+		Data: map[string]interface{}{},
 	}
 	resp, err := b.HandleRequest(context.Background(), req)
 	if err != nil {
@@ -287,14 +287,13 @@ func TestGPG_EncryptStreamWithSigner(t *testing.T) {
 		ciphertext.Write(part)
 	}
 
-	// Decrypt with signer verification via the plugin endpoint
+	// Decrypt with signer verification via URL path
 	req = &logical.Request{
 		Storage: storage, Operation: logical.UpdateOperation,
-		Path: "decrypt/recipient", ClientToken: "test-token",
+		Path: "decrypt/recipient/sign/signer", ClientToken: "test-token",
 		Data: map[string]interface{}{
-			"ciphertext":      base64.StdEncoding.EncodeToString(ciphertext.Bytes()),
-			"format":          "base64",
-			"signer_key_name": "signer",
+			"ciphertext": base64.StdEncoding.EncodeToString(ciphertext.Bytes()),
+			"format":     "base64",
 		},
 	}
 	resp, err = b.HandleRequest(context.Background(), req)

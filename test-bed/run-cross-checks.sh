@@ -121,13 +121,13 @@ echo "TEST 6: Encrypt+sign round-trip via plugin"
 
 PLAINTEXT="Signed and encrypted round-trip"
 PLAINTEXT_B64=$(echo -n "$PLAINTEXT" | base64)
-CIPHERTEXT=$($BAO write -field=ciphertext gpg/encrypt/test-key plaintext="$PLAINTEXT_B64" format=ascii-armor signer_key_name=signer-key 2>&1)
-RECOVERED_B64=$($BAO write -field=plaintext gpg/decrypt/test-key ciphertext="$CIPHERTEXT" format=ascii-armor signer_key_name=signer-key 2>&1)
+CIPHERTEXT=$($BAO write -field=ciphertext gpg/encrypt/test-key/sign/signer-key plaintext="$PLAINTEXT_B64" format=ascii-armor 2>&1)
+RECOVERED_B64=$($BAO write -field=plaintext gpg/decrypt/test-key/sign/signer-key ciphertext="$CIPHERTEXT" format=ascii-armor 2>&1)
 RECOVERED=$(echo "$RECOVERED_B64" | base64 -d)
 [ "$RECOVERED" = "$PLAINTEXT" ] && pass "encrypt+sign → decrypt+verify" || fail "encrypt+sign → decrypt+verify"
 
 # Wrong signer should fail
-if $BAO write gpg/decrypt/test-key ciphertext="$CIPHERTEXT" format=ascii-armor signer_key_name=test-key >/dev/null 2>&1; then
+if $BAO write gpg/decrypt/test-key/sign/test-key ciphertext="$CIPHERTEXT" format=ascii-armor >/dev/null 2>&1; then
     fail "wrong signer accepted"
 else
     pass "wrong signer rejected"

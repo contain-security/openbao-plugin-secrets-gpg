@@ -47,7 +47,7 @@ stream_encrypt_file_signed() {
     local key="$1" infile="$2" outfile="$3" signer="$4" chunk_size="${5:-8192}"
 
     local start_resp sid
-    start_resp=$($BAO write -format=json "gpg/encrypt-stream/$key/start" signer_key_name="$signer" 2>&1)
+    start_resp=$($BAO write -force -format=json "gpg/encrypt-stream/$key/sign/$signer/start" 2>&1)
     sid=$(echo "$start_resp" | jq -r '.data.session_id')
     echo -n "$(echo "$start_resp" | jq -r '.data.data')" | base64 -d > "$outfile"
 
@@ -104,8 +104,8 @@ echo -n "$PLAINTEXT" > "$TMPDIR/pt_signed.txt"
 stream_encrypt_file_signed "stream-enc-test" "$TMPDIR/pt_signed.txt" "$TMPDIR/ct_signed.bin" "stream-signer"
 
 base64 -w0 "$TMPDIR/ct_signed.bin" > "$TMPDIR/ct_signed.b64"
-RECOVERED_B64=$($BAO write -field=plaintext gpg/decrypt/stream-enc-test \
-    ciphertext=@"$TMPDIR/ct_signed.b64" format=base64 signer_key_name=stream-signer 2>&1)
+RECOVERED_B64=$($BAO write -field=plaintext gpg/decrypt/stream-enc-test/sign/stream-signer \
+    ciphertext=@"$TMPDIR/ct_signed.b64" format=base64 2>&1)
 RECOVERED=$(echo "$RECOVERED_B64" | base64 -d)
 assert_eq "$PLAINTEXT" "$RECOVERED" "signed stream encrypt round-trip"
 

@@ -14,16 +14,17 @@ import (
 // to produce a ciphertext for decrypt-stream testing.
 func encryptWithPlugin(t *testing.T, b *backend, storage logical.Storage, keyName string, plaintext []byte, signerKeyName string) []byte {
 	t.Helper()
+	path := "encrypt/" + keyName
+	if signerKeyName != "" {
+		path = "encrypt/" + keyName + "/sign/" + signerKeyName
+	}
 	data := map[string]interface{}{
 		"plaintext": base64.StdEncoding.EncodeToString(plaintext),
 		"format":    "base64",
 	}
-	if signerKeyName != "" {
-		data["signer_key_name"] = signerKeyName
-	}
 	req := &logical.Request{
 		Storage: storage, Operation: logical.UpdateOperation,
-		Path: "encrypt/" + keyName, ClientToken: "test-token",
+		Path: path, ClientToken: "test-token",
 		Data: data,
 	}
 	resp, err := b.HandleRequest(context.Background(), req)
@@ -295,13 +296,12 @@ func TestGPG_DecryptStreamWithSigner(t *testing.T) {
 	// Encrypt with signer using non-streaming endpoint
 	ciphertext := encryptWithPlugin(t, b, storage, "recipient", plaintext, "signer")
 
-	// Stream decrypt with signer verification
+	// Stream decrypt with signer verification via URL path
 	req := &logical.Request{
 		Storage: storage, Operation: logical.UpdateOperation,
-		Path: "decrypt-stream/recipient/start", ClientToken: "test-token",
+		Path: "decrypt-stream/recipient/sign/signer/start", ClientToken: "test-token",
 		Data: map[string]interface{}{
-			"data":            base64.StdEncoding.EncodeToString(ciphertext),
-			"signer_key_name": "signer",
+			"data": base64.StdEncoding.EncodeToString(ciphertext),
 		},
 	}
 	resp, err := b.HandleRequest(context.Background(), req)

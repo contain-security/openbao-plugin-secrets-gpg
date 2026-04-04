@@ -21,9 +21,28 @@ func pathEncryptStreamStart(b *backend) *framework.Path {
 				Type:        framework.TypeString,
 				Description: "The key to encrypt to",
 			},
-			"signer_key_name": {
+		},
+		Operations: map[logical.Operation]framework.OperationHandler{
+			logical.UpdateOperation: &framework.PathOperation{
+				Callback: b.pathEncryptStreamStartWrite,
+			},
+		},
+		HelpSynopsis:    pathEncryptStreamStartHelpSyn,
+		HelpDescription: pathEncryptStreamStartHelpDesc,
+	}
+}
+
+func pathEncryptStreamStartWithSigner(b *backend) *framework.Path {
+	return &framework.Path{
+		Pattern: "encrypt-stream/" + framework.GenericNameRegex("name") + "/sign/" + framework.GenericNameRegex("signer_name") + "/start",
+		Fields: map[string]*framework.FieldSchema{
+			"name": {
 				Type:        framework.TypeString,
-				Description: "Name of another GPG key stored in OpenBao to sign the message with.",
+				Description: "The key to encrypt to",
+			},
+			"signer_name": {
+				Type:        framework.TypeString,
+				Description: "The GPG key to sign the message with (from URL path)",
 			},
 		},
 		Operations: map[logical.Operation]framework.OperationHandler{
@@ -92,7 +111,7 @@ func (b *backend) pathEncryptStreamStartWrite(ctx context.Context, req *logical.
 	}
 
 	var signerEntity *openpgp.Entity
-	signerKeyName := data.Get("signer_key_name").(string)
+	signerKeyName := resolveSignerKeyName(data)
 	if signerKeyName != "" {
 		signerEntry, err := b.key(ctx, req.Storage, signerKeyName)
 		if err != nil {

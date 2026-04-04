@@ -183,15 +183,14 @@ func TestGPG_EncryptDecryptWithSigning(t *testing.T) {
 	originalPlaintext := "signed and encrypted message"
 	plaintextB64 := base64.StdEncoding.EncodeToString([]byte(originalPlaintext))
 
-	// Encrypt with signing
+	// Encrypt with signing via URL path
 	encResp, err := b.HandleRequest(context.Background(), &logical.Request{
 		Storage:   storage,
 		Operation: logical.UpdateOperation,
-		Path:      "encrypt/recipient",
+		Path:      "encrypt/recipient/sign/signer",
 		Data: map[string]interface{}{
-			"plaintext":       plaintextB64,
-			"format":          "ascii-armor",
-			"signer_key_name": "signer",
+			"plaintext": plaintextB64,
+			"format":    "ascii-armor",
 		},
 	})
 	if err != nil {
@@ -203,15 +202,14 @@ func TestGPG_EncryptDecryptWithSigning(t *testing.T) {
 
 	ciphertext := encResp.Data["ciphertext"].(string)
 
-	// Decrypt with signer verification
+	// Decrypt with signer verification via URL path
 	decResp, err := b.HandleRequest(context.Background(), &logical.Request{
 		Storage:   storage,
 		Operation: logical.UpdateOperation,
-		Path:      "decrypt/recipient",
+		Path:      "decrypt/recipient/sign/signer",
 		Data: map[string]interface{}{
-			"ciphertext":      ciphertext,
-			"format":          "ascii-armor",
-			"signer_key_name": "signer",
+			"ciphertext": ciphertext,
+			"format":     "ascii-armor",
 		},
 	})
 	if err != nil {
@@ -230,11 +228,10 @@ func TestGPG_EncryptDecryptWithSigning(t *testing.T) {
 	decResp, err = b.HandleRequest(context.Background(), &logical.Request{
 		Storage:   storage,
 		Operation: logical.UpdateOperation,
-		Path:      "decrypt/recipient",
+		Path:      "decrypt/recipient/sign/recipient",
 		Data: map[string]interface{}{
-			"ciphertext":      ciphertext,
-			"format":          "ascii-armor",
-			"signer_key_name": "recipient",
+			"ciphertext": ciphertext,
+			"format":     "ascii-armor",
 		},
 	})
 	if err != nil {
@@ -291,9 +288,16 @@ func TestGPG_EncryptError(t *testing.T) {
 		"format":    "invalid",
 	})
 
-	// Signer key does not exist
-	encryptMustFail("test", map[string]interface{}{
-		"plaintext":       base64.StdEncoding.EncodeToString([]byte("hello")),
-		"signer_key_name": "nonexistent",
+	// Signer key does not exist — use the /sign/ URL path
+	resp, _ := b.HandleRequest(context.Background(), &logical.Request{
+		Storage:   storage,
+		Operation: logical.UpdateOperation,
+		Path:      "encrypt/test/sign/nonexistent",
+		Data: map[string]interface{}{
+			"plaintext": base64.StdEncoding.EncodeToString([]byte("hello")),
+		},
 	})
+	if resp == nil || !resp.IsError() {
+		t.Fatal("expected error for nonexistent signer key via URL path")
+	}
 }

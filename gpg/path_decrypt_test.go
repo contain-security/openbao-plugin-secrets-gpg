@@ -26,14 +26,17 @@ func TestGPG_Decrypt(t *testing.T) {
 	}
 
 	decrypt := func(keyName, ciphertext, format, signerKeyName, expected string) {
+		path := "decrypt/" + keyName
+		if signerKeyName != "" {
+			path = "decrypt/" + keyName + "/sign/" + signerKeyName
+		}
 		reqDecrypt := &logical.Request{
 			Storage:   storage,
 			Operation: logical.UpdateOperation,
-			Path:      "decrypt/" + keyName,
+			Path:      path,
 			Data: map[string]interface{}{
-				"ciphertext":      ciphertext,
-				"format":          format,
-				"signer_key_name": signerKeyName,
+				"ciphertext": ciphertext,
+				"format":     format,
 			},
 		}
 
@@ -94,21 +97,24 @@ func TestGPG_DecryptError(t *testing.T) {
 	}
 
 	decryptMustFail := func(keyName, ciphertext, format, signerKeyName string) {
+		path := "decrypt/" + keyName
+		if signerKeyName != "" {
+			path = "decrypt/" + keyName + "/sign/" + signerKeyName
+		}
 		reqDecrypt := &logical.Request{
 			Storage:   storage,
 			Operation: logical.UpdateOperation,
-			Path:      "decrypt/" + keyName,
+			Path:      path,
 			Data: map[string]interface{}{
-				"ciphertext":      ciphertext,
-				"format":          format,
-				"signer_key_name": signerKeyName,
+				"ciphertext": ciphertext,
+				"format":     format,
 			},
 		}
 
 		resp, _ := b.HandleRequest(context.Background(), reqDecrypt)
 		if !resp.IsError() {
 			t.Fatalf(
-				"expected to fail, keyname: %s, format: %s, cipertext: %s, signer_key_name: %s",
+				"expected to fail, keyname: %s, format: %s, cipertext: %s, signer: %s",
 				keyName, format, ciphertext, signerKeyName)
 		}
 	}
@@ -126,7 +132,7 @@ func TestGPG_DecryptError(t *testing.T) {
 	// Signer key does not exist
 	decryptMustFail("test", encryptedMessageASCIIArmored, "ascii-armor", "nonExistentSignerKey")
 
-	// Message is not signed but signer_key_name is set
+	// Message is not signed but signer is set via URL
 	decryptMustFail("test", encryptedMessageASCIIArmored, "ascii-armor", "testGenerated")
 }
 

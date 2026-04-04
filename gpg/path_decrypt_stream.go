@@ -22,9 +22,32 @@ func pathDecryptStreamStart(b *backend) *framework.Path {
 				Type:        framework.TypeString,
 				Description: "The key to decrypt with",
 			},
-			"signer_key_name": {
+			"data": {
 				Type:        framework.TypeString,
-				Description: "Name of a GPG key stored in OpenBao to verify the signature.",
+				Description: "Base64-encoded initial ciphertext (must contain the PGP PKESK header).",
+			},
+		},
+		Operations: map[logical.Operation]framework.OperationHandler{
+			logical.UpdateOperation: &framework.PathOperation{
+				Callback: b.pathDecryptStreamStartWrite,
+			},
+		},
+		HelpSynopsis:    pathDecryptStreamStartHelpSyn,
+		HelpDescription: pathDecryptStreamStartHelpDesc,
+	}
+}
+
+func pathDecryptStreamStartWithSigner(b *backend) *framework.Path {
+	return &framework.Path{
+		Pattern: "decrypt-stream/" + framework.GenericNameRegex("name") + "/sign/" + framework.GenericNameRegex("signer_name") + "/start",
+		Fields: map[string]*framework.FieldSchema{
+			"name": {
+				Type:        framework.TypeString,
+				Description: "The key to decrypt with",
+			},
+			"signer_name": {
+				Type:        framework.TypeString,
+				Description: "The GPG key to verify the signature against (from URL path)",
 			},
 			"data": {
 				Type:        framework.TypeString,
@@ -183,7 +206,7 @@ func (b *backend) pathDecryptStreamStartWrite(ctx context.Context, req *logical.
 		return nil, err
 	}
 
-	signerKeyName := data.Get("signer_key_name").(string)
+	signerKeyName := resolveSignerKeyName(data)
 	hasSigner := signerKeyName != ""
 	if hasSigner {
 		signerEntry, err := b.key(ctx, req.Storage, signerKeyName)
