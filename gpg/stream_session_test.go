@@ -1,6 +1,7 @@
 package gpg
 
 import (
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -80,27 +81,67 @@ func TestSessionStore_MaxSessionsLimit(t *testing.T) {
 	}
 }
 
+func TestSessionStore_PerClientLimit(t *testing.T) {
+	store := newSessionStore()
+	store.maxSessions = 64
+	store.maxSessionsPerClient = 2
+
+	clientA := hashClientToken("token-a")
+	clientB := hashClientToken("token-b")
+
+	// Client A creates 2 sessions — should succeed
+	for i := 0; i < 2; i++ {
+		id, _ := generateSessionID()
+		err := store.create(&streamSession{id: id, clientTokenHash: clientA, lastAccess: time.Now()})
+		if err != nil {
+			t.Fatalf("client A session %d should succeed: %v", i, err)
+		}
+	}
+
+	// Client A's 3rd session — should fail
+	id, _ := generateSessionID()
+	err := store.create(&streamSession{id: id, clientTokenHash: clientA, lastAccess: time.Now()})
+	if err == nil {
+		t.Fatal("expected per-client limit error for client A")
+	}
+
+	// Client B can still create sessions (global limit not hit)
+	id, _ = generateSessionID()
+	err = store.create(&streamSession{id: id, clientTokenHash: clientB, lastAccess: time.Now()})
+	if err != nil {
+		t.Fatalf("client B should succeed: %v", err)
+	}
+
+	// Global count is 3 (2 for A, 1 for B)
+	if store.sessionCount.Load() != 3 {
+		t.Fatalf("expected count=3, got %d", store.sessionCount.Load())
+	}
+}
+
 func TestSessionStore_ConcurrentCreateMaxSessions(t *testing.T) {
 	store := newSessionStore()
 	store.maxSessions = 10
+	store.maxSessionsPerClient = 100 // disable per-client limit for this test
 
 	var wg sync.WaitGroup
 	successes := make(chan struct{}, 100)
 	failures := make(chan struct{}, 100)
 
-	// Launch 50 goroutines all trying to create sessions concurrently
+	// Launch 50 goroutines all trying to create sessions concurrently.
+	// Each gets a unique token so per-client limits don't interfere.
 	for i := 0; i < 50; i++ {
 		wg.Add(1)
-		go func() {
+		go func(idx int) {
 			defer wg.Done()
 			id, _ := generateSessionID()
-			err := store.create(&streamSession{id: id, lastAccess: time.Now()})
+			token := hashClientToken(fmt.Sprintf("token-%d", idx))
+			err := store.create(&streamSession{id: id, clientTokenHash: token, lastAccess: time.Now()})
 			if err != nil {
 				failures <- struct{}{}
 			} else {
 				successes <- struct{}{}
 			}
-		}()
+		}(i)
 	}
 	wg.Wait()
 	close(successes)

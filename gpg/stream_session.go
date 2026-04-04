@@ -18,8 +18,9 @@ import (
 
 const (
 	defaultSessionTimeout    = 5 * time.Minute
-	defaultMaxSessions       = 64
-	defaultMaxChunkSize      = 4 * 1024 * 1024  // 4MB decoded
+	defaultMaxSessions          = 64
+	defaultMaxSessionsPerClient = 4
+	defaultMaxChunkSize         = 4 * 1024 * 1024  // 4MB decoded
 	defaultMaxPlaintextSize  = 32 * 1024 * 1024 // 32MB — limit on decrypted plaintext to prevent decompression bombs
 	sessionCleanupInterval   = 30 * time.Second
 )
@@ -102,16 +103,19 @@ func (lw *lockedWriter) Write(p []byte) (int, error) {
 
 // sessionStore manages streaming sessions on the backend.
 type sessionStore struct {
-	sessions     sync.Map
-	sessionCount atomic.Int64
-	maxSessions  int
-	timeout      time.Duration
+	sessions             sync.Map
+	sessionCount         atomic.Int64
+	clientCounts         sync.Map // clientTokenHash -> *atomic.Int64
+	maxSessions          int
+	maxSessionsPerClient int
+	timeout              time.Duration
 }
 
 func newSessionStore() *sessionStore {
 	return &sessionStore{
-		maxSessions: defaultMaxSessions,
-		timeout:     defaultSessionTimeout,
+		maxSessions:          defaultMaxSessions,
+		maxSessionsPerClient: defaultMaxSessionsPerClient,
+		timeout:              defaultSessionTimeout,
 	}
 }
 
@@ -128,13 +132,28 @@ func hashClientToken(token string) string {
 	return hex.EncodeToString(h[:])
 }
 
+func (s *sessionStore) clientCounter(tokenHash string) *atomic.Int64 {
+	val, _ := s.clientCounts.LoadOrStore(tokenHash, &atomic.Int64{})
+	return val.(*atomic.Int64)
+}
+
 func (s *sessionStore) create(sess *streamSession) error {
-	// Atomic increment-then-check avoids TOCTOU race under concurrent creates.
+	// Global limit: atomic increment-then-check.
 	newCount := s.sessionCount.Add(1)
 	if int(newCount) > s.maxSessions {
 		s.sessionCount.Add(-1)
 		return fmt.Errorf("too many active streaming sessions (max %d)", s.maxSessions)
 	}
+
+	// Per-client limit: atomic increment-then-check on per-token counter.
+	counter := s.clientCounter(sess.clientTokenHash)
+	clientCount := counter.Add(1)
+	if int(clientCount) > s.maxSessionsPerClient {
+		counter.Add(-1)
+		s.sessionCount.Add(-1)
+		return fmt.Errorf("too many active sessions for this client (max %d)", s.maxSessionsPerClient)
+	}
+
 	s.sessions.Store(sess.id, sess)
 	return nil
 }
@@ -148,8 +167,10 @@ func (s *sessionStore) get(id string) (*streamSession, bool) {
 }
 
 func (s *sessionStore) remove(id string) {
-	if _, loaded := s.sessions.LoadAndDelete(id); loaded {
+	if val, loaded := s.sessions.LoadAndDelete(id); loaded {
+		sess := val.(*streamSession)
 		s.sessionCount.Add(-1)
+		s.clientCounter(sess.clientTokenHash).Add(-1)
 	}
 }
 
@@ -166,6 +187,7 @@ func (s *sessionStore) cleanup() int {
 			s.terminateSession(sess)
 			if _, loaded := s.sessions.LoadAndDelete(key); loaded {
 				s.sessionCount.Add(-1)
+				s.clientCounter(sess.clientTokenHash).Add(-1)
 				removed++
 			}
 		}
@@ -204,6 +226,7 @@ func (s *sessionStore) killAll() {
 		s.terminateSession(sess)
 		if _, loaded := s.sessions.LoadAndDelete(key); loaded {
 			s.sessionCount.Add(-1)
+			s.clientCounter(sess.clientTokenHash).Add(-1)
 		}
 		return true
 	})
