@@ -131,9 +131,13 @@ func (b *backend) pathShowSessionKeyWrite(ctx context.Context, req *logical.Requ
 		ciphertextDecoder = block.Body
 	}
 
+	const maxPackets = 1024
 	var p packet.Packet
 	var sessionKey string
-	for {
+	for i := 0; ; i++ {
+		if i >= maxPackets {
+			return logical.ErrorResponse("unable to decrypt session key"), logical.ErrInvalidRequest
+		}
 		p, err = packet.Read(ciphertextDecoder)
 		if err == io.EOF {
 			return logical.ErrorResponse("unable to decrypt session key"), nil
