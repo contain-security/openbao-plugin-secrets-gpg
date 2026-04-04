@@ -204,8 +204,8 @@ func (b *backend) pathKeyCreate(ctx context.Context, req *logical.Request, data 
 	var buf bytes.Buffer
 	switch generate {
 	case true:
-		if keyBits < 2048 {
-			return logical.ErrorResponse("Keys < 2048 bits are unsafe and not supported"), nil
+		if keyBits < 2048 || keyBits > 4096 {
+			return logical.ErrorResponse("key_bits must be between 2048 and 4096"), nil
 		}
 		config := packet.Config{
 			RSABits: keyBits,
