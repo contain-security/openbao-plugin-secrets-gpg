@@ -15,6 +15,12 @@ func Factory(ctx context.Context, conf *logical.BackendConfig) (logical.Backend,
 	if err := b.Setup(ctx, conf); err != nil {
 		return nil, err
 	}
+
+	// Start the session cleanup goroutine
+	cleanupCtx, cancel := context.WithCancel(context.Background())
+	b.cleanupCancel = cancel
+	b.streamSessions.startCleanupLoop(cleanupCtx)
+
 	return b, nil
 }
 
@@ -33,6 +39,18 @@ func Backend() *backend {
 			pathShowSessionKey(&b),
 			pathEncrypt(&b),
 			pathConfig(&b),
+			// Streaming sign
+			pathSignStreamStart(&b),
+			pathSignStreamUpdate(&b),
+			pathSignStreamFinalize(&b),
+			// Streaming encrypt
+			pathEncryptStreamStart(&b),
+			pathEncryptStreamUpdate(&b),
+			pathEncryptStreamFinalize(&b),
+			// Streaming decrypt
+			pathDecryptStreamStart(&b),
+			pathDecryptStreamUpdate(&b),
+			pathDecryptStreamFinalize(&b),
 		},
 		PathsSpecial: &logical.Paths{
 			SealWrapStorage: []string{
@@ -41,14 +59,27 @@ func Backend() *backend {
 		},
 		Secrets:     []*framework.Secret{},
 		BackendType: logical.TypeLogical,
+		Clean:       b.cleanup,
 	}
 	b.keyLocks = locksutil.CreateLocks()
+	b.streamSessions = newSessionStore()
 	return &b
 }
 
 type backend struct {
 	*framework.Backend
-	keyLocks []*locksutil.LockEntry
+	keyLocks       []*locksutil.LockEntry
+	streamSessions *sessionStore
+	cleanupCancel  context.CancelFunc
+}
+
+func (b *backend) cleanup(_ context.Context) {
+	if b.cleanupCancel != nil {
+		b.cleanupCancel()
+	}
+	if b.streamSessions != nil {
+		b.streamSessions.killAll()
+	}
 }
 
 const backendHelp = `
