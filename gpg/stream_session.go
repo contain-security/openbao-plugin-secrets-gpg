@@ -180,20 +180,46 @@ func (s *sessionStore) cleanup() int {
 	removed := 0
 	s.sessions.Range(func(key, value any) bool {
 		sess := value.(*streamSession)
+
+		// Hold sess.mu through the expiry check AND done marking so a
+		// concurrent update that refreshes lastAccess is not ignored.
 		sess.mu.Lock()
 		expired := now.Sub(sess.lastAccess) > s.timeout
+		if !expired || sess.done {
+			sess.mu.Unlock()
+			return true
+		}
+		sess.done = true
+		sess.err = fmt.Errorf("session expired")
 		sess.mu.Unlock()
-		if expired {
-			s.terminateSession(sess)
-			if _, loaded := s.sessions.LoadAndDelete(key); loaded {
-				s.sessionCount.Add(-1)
-				s.clientCounter(sess.clientTokenHash).Add(-1)
-				removed++
-			}
+
+		// Resource cleanup (pipe close, etc.) runs without sess.mu held
+		// to avoid blocking on I/O while holding the lock.
+		s.cleanupSessionResources(sess)
+
+		if _, loaded := s.sessions.LoadAndDelete(key); loaded {
+			s.sessionCount.Add(-1)
+			s.clientCounter(sess.clientTokenHash).Add(-1)
+			removed++
 		}
 		return true
 	})
 	return removed
+}
+
+// cleanupSessionResources closes pipes and other resources for a session
+// that has already been marked done. Must be called WITHOUT sess.mu held.
+func (s *sessionStore) cleanupSessionResources(sess *streamSession) {
+	switch sess.sessionType {
+	case sessionTypeEncrypt:
+		if sess.encrypt != nil && sess.encrypt.plainWriter != nil {
+			sess.encrypt.plainWriter.Close()
+		}
+	case sessionTypeDecrypt:
+		if sess.decrypt != nil && sess.decrypt.bpw != nil {
+			sess.decrypt.bpw.Close()
+		}
+	}
 }
 
 // terminateSession cleans up resources for a session (closes pipes, etc).
