@@ -304,7 +304,7 @@ func (b *backend) pathDecryptStreamStartWrite(ctx context.Context, req *logical.
 	if err := b.streamSessions.create(sess); err != nil {
 		bpw.Close()
 		inputPipeR.Close()
-		return logical.ErrorResponse(err.Error()), nil
+		return logical.ErrorResponse("unable to create streaming session"), nil
 	}
 
 	// Write initial ciphertext to the buffered pipe.
@@ -423,7 +423,7 @@ func (b *backend) pathDecryptStreamUpdateWrite(ctx context.Context, req *logical
 	if sess.sessionType != sessionTypeDecrypt {
 		return logical.ErrorResponse("session is not a decrypt session"), logical.ErrInvalidRequest
 	}
-	if sess.clientTokenHash != hashClientToken(req.ClientToken) {
+	if !clientTokenMatches(sess.clientTokenHash, req.ClientToken) {
 		return logical.ErrorResponse("session belongs to a different client"), logical.ErrInvalidRequest
 	}
 	if sess.keyName != data.Get("name").(string) {
@@ -450,7 +450,7 @@ func (b *backend) pathDecryptStreamUpdateWrite(ctx context.Context, req *logical
 
 	// Write ciphertext to the buffered pipe (non-blocking).
 	if _, err := sess.decrypt.bpw.Write(input); err != nil {
-		return nil, fmt.Errorf("error writing ciphertext: %w", err)
+		return nil, fmt.Errorf("decryption failed")
 	}
 
 	// Drain available decrypted plaintext. The goroutine may not have
@@ -494,7 +494,7 @@ func (b *backend) pathDecryptStreamFinalizeWrite(ctx context.Context, req *logic
 	if sess.sessionType != sessionTypeDecrypt {
 		return logical.ErrorResponse("session is not a decrypt session"), logical.ErrInvalidRequest
 	}
-	if sess.clientTokenHash != hashClientToken(req.ClientToken) {
+	if !clientTokenMatches(sess.clientTokenHash, req.ClientToken) {
 		return logical.ErrorResponse("session belongs to a different client"), logical.ErrInvalidRequest
 	}
 	if sess.keyName != data.Get("name").(string) {

@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"fmt"
 	"hash"
@@ -130,6 +131,10 @@ func generateSessionID() (string, error) {
 func hashClientToken(token string) string {
 	h := sha256.Sum256([]byte(token))
 	return hex.EncodeToString(h[:])
+}
+
+func clientTokenMatches(stored, token string) bool {
+	return subtle.ConstantTimeCompare([]byte(stored), []byte(hashClientToken(token))) == 1
 }
 
 func (s *sessionStore) clientCounter(tokenHash string) *atomic.Int64 {

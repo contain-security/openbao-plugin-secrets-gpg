@@ -2,7 +2,6 @@ package gpg
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/openbao/openbao/sdk/v2/framework"
 	"github.com/openbao/openbao/sdk/v2/helper/locksutil"
@@ -43,7 +42,7 @@ func (b *backend) pathConfigWrite(ctx context.Context, req *logical.Request, dat
 		return nil, err
 	}
 	if entry == nil {
-		return logical.ErrorResponse(fmt.Sprintf("no existing key named %s could be found", name)), logical.ErrInvalidRequest
+		return logical.ErrorResponse("key not found"), logical.ErrInvalidRequest
 	}
 
 	return nil, nil

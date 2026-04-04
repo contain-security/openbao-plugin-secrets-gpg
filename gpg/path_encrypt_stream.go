@@ -184,7 +184,7 @@ func (b *backend) pathEncryptStreamStartWrite(ctx context.Context, req *logical.
 	if err := b.streamSessions.create(sess); err != nil {
 		// Clean up
 		plainWriter.Close()
-		return logical.ErrorResponse(err.Error()), nil
+		return logical.ErrorResponse("unable to create streaming session"), nil
 	}
 
 	// Drain the initial output (PKESK header)
@@ -220,7 +220,7 @@ func (b *backend) pathEncryptStreamUpdateWrite(ctx context.Context, req *logical
 	if sess.sessionType != sessionTypeEncrypt {
 		return logical.ErrorResponse("session is not an encrypt session"), logical.ErrInvalidRequest
 	}
-	if sess.clientTokenHash != hashClientToken(req.ClientToken) {
+	if !clientTokenMatches(sess.clientTokenHash, req.ClientToken) {
 		return logical.ErrorResponse("session belongs to a different client"), logical.ErrInvalidRequest
 	}
 	if sess.keyName != data.Get("name").(string) {
@@ -278,7 +278,7 @@ func (b *backend) pathEncryptStreamFinalizeWrite(ctx context.Context, req *logic
 	if sess.sessionType != sessionTypeEncrypt {
 		return logical.ErrorResponse("session is not an encrypt session"), logical.ErrInvalidRequest
 	}
-	if sess.clientTokenHash != hashClientToken(req.ClientToken) {
+	if !clientTokenMatches(sess.clientTokenHash, req.ClientToken) {
 		return logical.ErrorResponse("session belongs to a different client"), logical.ErrInvalidRequest
 	}
 	if sess.keyName != data.Get("name").(string) {

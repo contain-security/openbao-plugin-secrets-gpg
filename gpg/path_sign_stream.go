@@ -193,7 +193,7 @@ func (b *backend) pathSignStreamStartWrite(ctx context.Context, req *logical.Req
 	}
 
 	if err := b.streamSessions.create(sess); err != nil {
-		return logical.ErrorResponse(err.Error()), nil
+		return logical.ErrorResponse("unable to create streaming session"), nil
 	}
 
 	return &logical.Response{
@@ -221,7 +221,7 @@ func (b *backend) pathSignStreamUpdateWrite(ctx context.Context, req *logical.Re
 	if sess.sessionType != sessionTypeSign {
 		return logical.ErrorResponse("session is not a sign session"), logical.ErrInvalidRequest
 	}
-	if sess.clientTokenHash != hashClientToken(req.ClientToken) {
+	if !clientTokenMatches(sess.clientTokenHash, req.ClientToken) {
 		return logical.ErrorResponse("session belongs to a different client"), logical.ErrInvalidRequest
 	}
 	if sess.keyName != data.Get("name").(string) {
@@ -270,7 +270,7 @@ func (b *backend) pathSignStreamFinalizeWrite(ctx context.Context, req *logical.
 	if sess.sessionType != sessionTypeSign {
 		return logical.ErrorResponse("session is not a sign session"), logical.ErrInvalidRequest
 	}
-	if sess.clientTokenHash != hashClientToken(req.ClientToken) {
+	if !clientTokenMatches(sess.clientTokenHash, req.ClientToken) {
 		return logical.ErrorResponse("session belongs to a different client"), logical.ErrInvalidRequest
 	}
 	if sess.keyName != data.Get("name").(string) {

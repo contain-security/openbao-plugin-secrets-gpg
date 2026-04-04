@@ -117,6 +117,9 @@ func (b *backend) entity(entry *keyEntry) (*openpgp.Entity, error) {
 	if err != nil {
 		return nil, err
 	}
+	if len(el) == 0 {
+		return nil, fmt.Errorf("no entities found in stored key")
+	}
 
 	return el[0], nil
 }
@@ -232,6 +235,10 @@ func (b *backend) pathKeyCreate(ctx context.Context, req *logical.Request, data 
 	default:
 		if key == "" {
 			return logical.ErrorResponse("the key value is required for generated keys"), nil
+		}
+		const maxImportedKeySize = 256 * 1024 // 256KB
+		if len(key) > maxImportedKeySize {
+			return logical.ErrorResponse("imported key exceeds maximum size"), nil
 		}
 		el, err := openpgp.ReadArmoredKeyRing(strings.NewReader(key))
 		if err != nil {
