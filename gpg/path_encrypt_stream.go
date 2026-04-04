@@ -128,6 +128,9 @@ func (b *backend) pathEncryptStreamStartWrite(ctx context.Context, req *logical.
 		if signerEntry == nil {
 			return logical.ErrorResponse("signer key not found"), logical.ErrInvalidRequest
 		}
+		if !signerEntry.HasPrivateKey {
+			return logical.ErrorResponse("signing requires a key with private key material"), logical.ErrInvalidRequest
+		}
 		signerEntity, err = b.entity(signerEntry)
 		if err != nil {
 			return nil, err

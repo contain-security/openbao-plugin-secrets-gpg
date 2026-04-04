@@ -92,6 +92,9 @@ func (b *backend) pathShowSessionKeyWrite(ctx context.Context, req *logical.Requ
 	if keyEntry == nil {
 		return logical.ErrorResponse("key not found"), logical.ErrInvalidRequest
 	}
+	if !keyEntry.HasPrivateKey {
+		return logical.ErrorResponse("session key extraction requires a key with private key material"), logical.ErrInvalidRequest
+	}
 
 	r := bytes.NewReader(keyEntry.SerializedKey)
 	keyring, err := openpgp.ReadKeyRing(r)

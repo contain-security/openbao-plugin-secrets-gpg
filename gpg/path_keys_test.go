@@ -84,27 +84,147 @@ func TestGPG_CreateErrorGeneratedDuplicateKey(t *testing.T) {
 	}
 }
 
-func TestGPG_CreateErrorGeneratedKeyWithOnlyPublicKey(t *testing.T) {
+func TestGPG_ImportPublicKeyOnly(t *testing.T) {
 	storage := &logical.InmemStorage{}
 
 	b := Backend()
 
+	// Public-only key import should succeed
 	req := &logical.Request{
 		Storage:   storage,
 		Operation: logical.UpdateOperation,
-		Path:      "keys/test",
+		Path:      "keys/pubonly",
 		Data: map[string]interface{}{
 			"generate": false,
 			"key":      gpgPublicKey,
 		},
 	}
 	response, err := b.HandleRequest(context.Background(), req)
-
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !response.IsError() {
-		t.Fatal("Keyring is only a public key but has been created")
+	if response != nil && response.IsError() {
+		t.Fatalf("public key import should succeed: %s", response.Error().Error())
+	}
+
+	// Read should show has_private_key=false
+	req = &logical.Request{
+		Storage:   storage,
+		Operation: logical.ReadOperation,
+		Path:      "keys/pubonly",
+	}
+	response, err = b.HandleRequest(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.Data["has_private_key"].(bool) {
+		t.Fatal("expected has_private_key=false for public-only import")
+	}
+
+	// Sign should fail with public-only key
+	req = &logical.Request{
+		Storage:   storage,
+		Operation: logical.UpdateOperation,
+		Path:      "sign/pubonly",
+		Data: map[string]interface{}{
+			"input": "dGVzdA==",
+		},
+	}
+	response, _ = b.HandleRequest(context.Background(), req)
+	if response == nil || !response.IsError() {
+		t.Fatal("sign with public-only key should fail")
+	}
+
+	// Decrypt should fail with public-only key
+	req = &logical.Request{
+		Storage:   storage,
+		Operation: logical.UpdateOperation,
+		Path:      "decrypt/pubonly",
+		Data: map[string]interface{}{
+			"ciphertext": "dGVzdA==",
+			"format":     "base64",
+		},
+	}
+	response, _ = b.HandleRequest(context.Background(), req)
+	if response == nil || !response.IsError() {
+		t.Fatal("decrypt with public-only key should fail")
+	}
+
+	// Verify should succeed with public-only key:
+	// 1. Create a key with private material to sign with
+	req = &logical.Request{
+		Storage:   storage,
+		Operation: logical.UpdateOperation,
+		Path:      "keys/fullkey",
+		Data: map[string]interface{}{
+			"real_name": "Full Key",
+		},
+	}
+	_, err = b.HandleRequest(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 2. Import the full key's public key as a separate public-only key
+	readResp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Storage:   storage,
+		Operation: logical.ReadOperation,
+		Path:      "keys/fullkey",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pubKey := readResp.Data["public_key"].(string)
+
+	req = &logical.Request{
+		Storage:   storage,
+		Operation: logical.UpdateOperation,
+		Path:      "keys/fullkey-pub",
+		Data: map[string]interface{}{
+			"generate": false,
+			"key":      pubKey,
+		},
+	}
+	_, err = b.HandleRequest(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 3. Sign with the full key
+	signResp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Storage:   storage,
+		Operation: logical.UpdateOperation,
+		Path:      "sign/fullkey",
+		Data: map[string]interface{}{
+			"input": "dGVzdA==",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if signResp.IsError() {
+		t.Fatalf("sign error: %s", signResp.Error().Error())
+	}
+	sig := signResp.Data["signature"].(string)
+
+	// 4. Verify with the public-only copy
+	verifyResp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Storage:   storage,
+		Operation: logical.UpdateOperation,
+		Path:      "verify/fullkey-pub",
+		Data: map[string]interface{}{
+			"input":     "dGVzdA==",
+			"signature": sig,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if verifyResp.IsError() {
+		t.Fatalf("verify error: %s", verifyResp.Error().Error())
+	}
+	if !verifyResp.Data["valid"].(bool) {
+		t.Fatal("signature should be valid when verified with public-only key")
 	}
 }
 

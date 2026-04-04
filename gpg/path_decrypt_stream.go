@@ -231,6 +231,9 @@ func (b *backend) pathDecryptStreamStartWrite(ctx context.Context, req *logical.
 	if keyEntry == nil {
 		return logical.ErrorResponse("key not found"), logical.ErrInvalidRequest
 	}
+	if !keyEntry.HasPrivateKey {
+		return logical.ErrorResponse("decryption requires a key with private key material"), logical.ErrInvalidRequest
+	}
 
 	r := bytes.NewReader(keyEntry.SerializedKey)
 	keyring, err := openpgp.ReadKeyRing(r)

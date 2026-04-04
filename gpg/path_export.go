@@ -41,6 +41,9 @@ func (b *backend) pathExportKeyRead(ctx context.Context, req *logical.Request, d
 	if !entry.Exportable {
 		return logical.ErrorResponse("key is not exportable"), nil
 	}
+	if !entry.HasPrivateKey {
+		return logical.ErrorResponse("key does not contain private key material"), nil
+	}
 
 	var buf bytes.Buffer
 	w, err := armor.Encode(&buf, openpgp.PrivateKeyType, nil)

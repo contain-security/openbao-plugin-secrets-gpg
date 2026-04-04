@@ -132,6 +132,9 @@ func (b *backend) pathSignWrite(ctx context.Context, req *logical.Request, data 
 	if entry == nil {
 		return logical.ErrorResponse("key not found"), logical.ErrInvalidRequest
 	}
+	if !entry.HasPrivateKey {
+		return logical.ErrorResponse("signing requires a key with private key material"), logical.ErrInvalidRequest
+	}
 	entity, err := b.entity(entry)
 	if err != nil {
 		return nil, err
