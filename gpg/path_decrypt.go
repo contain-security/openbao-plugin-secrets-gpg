@@ -121,14 +121,14 @@ func (b *backend) pathDecryptWrite(ctx context.Context, req *logical.Request, da
 	case "ascii-armor":
 		block, err := armor.Decode(ciphertextEncoded)
 		if err != nil {
-			return logical.ErrorResponse(err.Error()), logical.ErrInvalidRequest
+			return logical.ErrorResponse("unable to decode armored ciphertext"), logical.ErrInvalidRequest
 		}
 		ciphertextDecoder = block.Body
 	}
 
 	md, err := openpgp.ReadMessage(ciphertextDecoder, keyring, nil, nil)
 	if err != nil {
-		return logical.ErrorResponse(err.Error()), logical.ErrInvalidRequest
+		return logical.ErrorResponse("decryption failed"), logical.ErrInvalidRequest
 	}
 
 	var plaintext bytes.Buffer
@@ -145,7 +145,7 @@ func (b *backend) pathDecryptWrite(ctx context.Context, req *logical.Request, da
 	}
 
 	if signerKeyName != "" && (!md.IsSigned || md.SignedBy == nil || md.SignatureError != nil) {
-		return logical.ErrorResponse("Signature is invalid or not present: %s", md.SignatureError), nil
+		return logical.ErrorResponse("signature verification failed"), nil
 	}
 
 	return &logical.Response{

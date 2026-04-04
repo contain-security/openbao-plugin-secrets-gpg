@@ -322,7 +322,7 @@ func (b *backend) pathDecryptStreamStartWrite(ctx context.Context, req *logical.
 		md, err := openpgp.ReadMessage(inputPipeR, keyring, nil, nil)
 		if err != nil {
 			decState.outputMu.Lock()
-			decState.goroutineErr = fmt.Errorf("ReadMessage error: %w", err)
+			decState.goroutineErr = fmt.Errorf("decryption failed")
 			decState.outputMu.Unlock()
 			readyOnce.Do(func() { close(readySignal) })
 			return
@@ -343,7 +343,7 @@ func (b *backend) pathDecryptStreamStartWrite(ctx context.Context, req *logical.
 		}
 		if err != nil {
 			decState.outputMu.Lock()
-			decState.goroutineErr = fmt.Errorf("decryption error: %w", err)
+			decState.goroutineErr = fmt.Errorf("decryption failed")
 			decState.outputMu.Unlock()
 			return
 		}
@@ -352,7 +352,7 @@ func (b *backend) pathDecryptStreamStartWrite(ctx context.Context, req *logical.
 		if hasSigner {
 			if !md.IsSigned || md.SignedBy == nil || md.SignatureError != nil {
 				decState.outputMu.Lock()
-				decState.sigError = fmt.Errorf("signature is invalid or not present: %v", md.SignatureError)
+				decState.sigError = fmt.Errorf("signature verification failed")
 				decState.outputMu.Unlock()
 			}
 		}
@@ -517,9 +517,6 @@ func (b *backend) pathDecryptStreamFinalizeWrite(ctx context.Context, req *logic
 
 	if sess.decrypt.hasSigner {
 		respData["signature_valid"] = sigError == nil
-		if sigError != nil {
-			respData["signature_error"] = sigError.Error()
-		}
 	}
 
 	b.streamSessions.remove(sessionID)
@@ -554,6 +551,6 @@ const pathDecryptStreamFinalizeHelpSyn = "Finalize a streaming decrypt session"
 const pathDecryptStreamFinalizeHelpDesc = `
 Finalizes the streaming decryption session. Returns any remaining decrypted
 plaintext and, if a signer was specified, the signature verification result
-(signature_valid and signature_error fields). Only after this response
-confirms signature_valid: true should the client trust the decrypted data.
+(signature_valid field). Only after this response confirms
+signature_valid: true should the client trust the decrypted data.
 `

@@ -123,7 +123,7 @@ func (b *backend) pathShowSessionKeyWrite(ctx context.Context, req *logical.Requ
 	case "ascii-armor":
 		block, err := armor.Decode(ciphertextEncoded)
 		if err != nil {
-			return logical.ErrorResponse(err.Error()), logical.ErrInvalidRequest
+			return logical.ErrorResponse("unable to decode armored ciphertext"), logical.ErrInvalidRequest
 		}
 		ciphertextDecoder = block.Body
 	}
@@ -133,10 +133,10 @@ func (b *backend) pathShowSessionKeyWrite(ctx context.Context, req *logical.Requ
 	for {
 		p, err = packet.Read(ciphertextDecoder)
 		if err == io.EOF {
-			return logical.ErrorResponse("Unable to decrypt session key"), nil
+			return logical.ErrorResponse("unable to decrypt session key"), nil
 		}
 		if err != nil {
-			return logical.ErrorResponse(err.Error()), logical.ErrInvalidRequest
+			return logical.ErrorResponse("unable to decrypt session key"), logical.ErrInvalidRequest
 		}
 		switch p := p.(type) {
 		case *packet.EncryptedKey:
