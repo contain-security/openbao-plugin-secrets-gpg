@@ -439,6 +439,76 @@ func TestGPG_SignStreamVerifyWithGoOpenpgp(t *testing.T) {
 	}
 }
 
+func TestGPG_SignStreamAllAlgorithms(t *testing.T) {
+	// Verify that newDetachedSignaturePacket produces correct signatures for
+	// all supported hash algorithms. This catches drift if go-crypto changes
+	// its internal signature packet construction.
+	b := Backend()
+	b.streamSessions = newSessionStore()
+	storage := &logical.InmemStorage{}
+
+	req := &logical.Request{
+		Storage: storage, Operation: logical.UpdateOperation,
+		Path: "keys/test", ClientToken: "test-token",
+		Data: map[string]interface{}{"real_name": "Test", "email": "t@t.com"},
+	}
+	_, err := b.HandleRequest(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	readResp, _ := b.HandleRequest(context.Background(), &logical.Request{
+		Storage: storage, Operation: logical.ReadOperation, Path: "keys/test",
+	})
+	pubKeyArmor := readResp.Data["public_key"].(string)
+	keyring, err := openpgp.ReadArmoredKeyRing(strings.NewReader(pubKeyArmor))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	data := []byte("algorithm compatibility test data")
+
+	for _, algo := range []string{"sha2-224", "sha2-256", "sha2-384", "sha2-512"} {
+		t.Run(algo, func(t *testing.T) {
+			// Stream sign
+			resp, err := b.HandleRequest(context.Background(), &logical.Request{
+				Storage: storage, Operation: logical.UpdateOperation,
+				Path: "sign-stream/test/start", ClientToken: "test-token",
+				Data: map[string]interface{}{"algorithm": algo, "format": "ascii-armor"},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			sid := resp.Data["session_id"].(string)
+
+			_, err = b.HandleRequest(context.Background(), &logical.Request{
+				Storage: storage, Operation: logical.UpdateOperation,
+				Path: "sign-stream/test/update", ClientToken: "test-token",
+				Data: map[string]interface{}{"session_id": sid, "input": base64.StdEncoding.EncodeToString(data)},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			resp, err = b.HandleRequest(context.Background(), &logical.Request{
+				Storage: storage, Operation: logical.UpdateOperation,
+				Path: "sign-stream/test/finalize", ClientToken: "test-token",
+				Data: map[string]interface{}{"session_id": sid},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			sig := resp.Data["signature"].(string)
+
+			// Verify with go-crypto directly
+			_, err = openpgp.CheckArmoredDetachedSignature(keyring, bytes.NewReader(data), strings.NewReader(sig), nil)
+			if err != nil {
+				t.Fatalf("go-crypto verification failed for %s: %v", algo, err)
+			}
+		})
+	}
+}
+
 func TestGPG_SignStreamErrors(t *testing.T) {
 	b := Backend()
 	b.streamSessions = newSessionStore()
