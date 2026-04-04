@@ -383,14 +383,17 @@ func (b *backend) pathDecryptStreamStartWrite(ctx context.Context, req *logical.
 	decState.outputBuf.Reset()
 	decState.outputMu.Unlock()
 
-	return &logical.Response{
-		Data: map[string]interface{}{
-			"session_id": sessionID,
-			"data":       base64.StdEncoding.EncodeToString(initialPlaintext),
-			"sequence":   int64(0),
-			"done":       false,
-		},
-	}, nil
+	respData := map[string]interface{}{
+		"session_id": sessionID,
+		"data":       base64.StdEncoding.EncodeToString(initialPlaintext),
+		"sequence":   int64(0),
+		"done":       false,
+	}
+	if hasSigner {
+		respData["signature_verified"] = false
+	}
+
+	return &logical.Response{Data: respData}, nil
 }
 
 func (b *backend) pathDecryptStreamUpdateWrite(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
@@ -448,14 +451,17 @@ func (b *backend) pathDecryptStreamUpdateWrite(ctx context.Context, req *logical
 	sess.sequence++
 	sess.lastAccess = time.Now()
 
-	return &logical.Response{
-		Data: map[string]interface{}{
-			"session_id": sessionID,
-			"data":       base64.StdEncoding.EncodeToString(plaintext),
-			"sequence":   sess.sequence,
-			"done":       false,
-		},
-	}, nil
+	respData := map[string]interface{}{
+		"session_id": sessionID,
+		"data":       base64.StdEncoding.EncodeToString(plaintext),
+		"sequence":   sess.sequence,
+		"done":       false,
+	}
+	if sess.decrypt.hasSigner {
+		respData["signature_verified"] = false
+	}
+
+	return &logical.Response{Data: respData}, nil
 }
 
 func (b *backend) pathDecryptStreamFinalizeWrite(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
@@ -528,14 +534,26 @@ const pathDecryptStreamStartHelpDesc = `
 Starts a streaming decryption session for the named GPG key. The initial
 ciphertext data must contain at least the PGP PKESK header. Returns a
 session_id and any initial decrypted plaintext.
+
+IMPORTANT: When a signer key is specified, plaintext returned by start and
+update responses is UNVERIFIED. The PGP signature is appended after the
+message body, so it cannot be checked until all data is read. The client
+MUST wait for the finalize response and check signature_valid before
+trusting or processing any of the received plaintext. Start and update
+responses include "signature_verified": false as a reminder.
 `
 const pathDecryptStreamUpdateHelpSyn = "Feed a ciphertext chunk to a streaming decrypt session"
 const pathDecryptStreamUpdateHelpDesc = `
 Sends a base64-encoded ciphertext chunk to an active decryption session.
 Returns any decrypted plaintext available. Chunks must be sent sequentially.
+
+When a signer key is specified, responses include "signature_verified": false.
+Do not act on the plaintext until finalize confirms signature_valid is true.
 `
 const pathDecryptStreamFinalizeHelpSyn = "Finalize a streaming decrypt session"
 const pathDecryptStreamFinalizeHelpDesc = `
 Finalizes the streaming decryption session. Returns any remaining decrypted
-plaintext and, if a signer was specified, the signature verification result.
+plaintext and, if a signer was specified, the signature verification result
+(signature_valid and signature_error fields). Only after this response
+confirms signature_valid: true should the client trust the decrypted data.
 `
