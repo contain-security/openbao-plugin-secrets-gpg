@@ -45,13 +45,13 @@ stream_encrypt_to_file() {
         [ $remaining -lt $read_size ] && read_size=$remaining
         dd if="$infile" bs=1 skip=$offset count=$read_size 2>/dev/null | base64 -w0 > "$TMPDIR/_chunk.b64"
         local resp
-        resp=$($BAO write -format=json "gpg/encrypt-stream/session/$sid/update" data=@"$TMPDIR/_chunk.b64" 2>&1)
+        resp=$($BAO write -format=json "gpg/encrypt-stream/$key/update" session_id="$sid" data=@"$TMPDIR/_chunk.b64" 2>&1)
         echo -n "$(echo "$resp" | jq -r '.data.data')" | base64 -d >> "$outfile"
         offset=$((offset + read_size))
     done
 
     local fin_resp
-    fin_resp=$($BAO write -force -format=json "gpg/encrypt-stream/session/$sid/finalize" 2>&1)
+    fin_resp=$($BAO write -force -format=json "gpg/encrypt-stream/$key/finalize" session_id="$sid" 2>&1)
     echo -n "$(echo "$fin_resp" | jq -r '.data.data')" | base64 -d >> "$outfile"
 }
 
@@ -82,13 +82,13 @@ stream_decrypt_file() {
         [ $remaining -lt $read_size ] && read_size=$remaining
         dd if="$infile" bs=1 skip=$offset count=$read_size 2>/dev/null | base64 -w0 > "$TMPDIR/_chunk.b64"
         local resp
-        resp=$($BAO write -format=json "gpg/decrypt-stream/session/$sid/update" data=@"$TMPDIR/_chunk.b64" 2>&1)
+        resp=$($BAO write -format=json "gpg/decrypt-stream/$key/update" session_id="$sid" data=@"$TMPDIR/_chunk.b64" 2>&1)
         echo -n "$(echo "$resp" | jq -r '.data.data')" | base64 -d >> "$outfile"
         offset=$((offset + read_size))
     done
 
     local fin_resp
-    fin_resp=$($BAO write -force -format=json "gpg/decrypt-stream/session/$sid/finalize" 2>&1)
+    fin_resp=$($BAO write -force -format=json "gpg/decrypt-stream/$key/finalize" session_id="$sid" 2>&1)
     echo -n "$(echo "$fin_resp" | jq -r '.data.data')" | base64 -d >> "$outfile"
 
     # Return finalize response for caller to inspect
@@ -151,7 +151,7 @@ START_RESP=$($BAO write -format=json gpg/decrypt-stream/stream-dec-test/start da
 SID=$(echo "$START_RESP" | jq -r '.data.session_id')
 echo -n "$(echo "$START_RESP" | jq -r '.data.data')" | base64 -d > "$TMPDIR/pt_fromstart.bin"
 
-FIN_RESP=$($BAO write -force -format=json "gpg/decrypt-stream/session/$SID/finalize" 2>&1)
+FIN_RESP=$($BAO write -force -format=json "gpg/decrypt-stream/stream-dec-test/finalize" session_id="$SID" 2>&1)
 echo -n "$(echo "$FIN_RESP" | jq -r '.data.data')" | base64 -d >> "$TMPDIR/pt_fromstart.bin"
 
 RECOVERED=$(cat "$TMPDIR/pt_fromstart.bin")
@@ -166,7 +166,7 @@ assert_cmd_fails "missing initial data rejected" \
 begin_test "Update non-existent session fails"
 echo "dGVzdA==" > "$TMPDIR/_junk.b64"
 assert_cmd_fails "non-existent session rejected" \
-    $BAO write gpg/decrypt-stream/session/fakeid/update data=@"$TMPDIR/_junk.b64"
+    $BAO write gpg/decrypt-stream/stream-dec-test/update session_id=fakeid data=@"$TMPDIR/_junk.b64"
 
 # --- Cleanup ---
 delete_key "stream-dec-test"

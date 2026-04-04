@@ -66,8 +66,12 @@ func pathDecryptStreamStartWithSigner(b *backend) *framework.Path {
 
 func pathDecryptStreamUpdate(b *backend) *framework.Path {
 	return &framework.Path{
-		Pattern: "decrypt-stream/session/" + framework.GenericNameRegex("session_id") + "/update",
+		Pattern: "decrypt-stream/" + framework.GenericNameRegex("name") + "/update",
 		Fields: map[string]*framework.FieldSchema{
+			"name": {
+				Type:        framework.TypeString,
+				Description: "The key to decrypt with",
+			},
 			"session_id": {
 				Type:        framework.TypeString,
 				Description: "Session ID returned from the start endpoint",
@@ -89,8 +93,12 @@ func pathDecryptStreamUpdate(b *backend) *framework.Path {
 
 func pathDecryptStreamFinalize(b *backend) *framework.Path {
 	return &framework.Path{
-		Pattern: "decrypt-stream/session/" + framework.GenericNameRegex("session_id") + "/finalize",
+		Pattern: "decrypt-stream/" + framework.GenericNameRegex("name") + "/finalize",
 		Fields: map[string]*framework.FieldSchema{
+			"name": {
+				Type:        framework.TypeString,
+				Description: "The key to decrypt with",
+			},
 			"session_id": {
 				Type:        framework.TypeString,
 				Description: "Session ID returned from the start endpoint",
@@ -415,6 +423,9 @@ func (b *backend) pathDecryptStreamUpdateWrite(ctx context.Context, req *logical
 	if sess.clientTokenHash != hashClientToken(req.ClientToken) {
 		return logical.ErrorResponse("session belongs to a different client"), logical.ErrInvalidRequest
 	}
+	if sess.keyName != data.Get("name").(string) {
+		return logical.ErrorResponse("key name does not match session"), logical.ErrInvalidRequest
+	}
 
 	// Check for goroutine errors
 	sess.decrypt.outputMu.Lock()
@@ -482,6 +493,9 @@ func (b *backend) pathDecryptStreamFinalizeWrite(ctx context.Context, req *logic
 	}
 	if sess.clientTokenHash != hashClientToken(req.ClientToken) {
 		return logical.ErrorResponse("session belongs to a different client"), logical.ErrInvalidRequest
+	}
+	if sess.keyName != data.Get("name").(string) {
+		return logical.ErrorResponse("key name does not match session"), logical.ErrInvalidRequest
 	}
 
 	// Close the buffered pipe writer — signals EOF to the goroutine

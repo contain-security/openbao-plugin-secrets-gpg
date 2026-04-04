@@ -67,8 +67,8 @@ func streamEncryptWithPlugin(t *testing.T, b *backend, storage logical.Storage, 
 		}
 		req = &logical.Request{
 			Storage: storage, Operation: logical.UpdateOperation,
-			Path: "encrypt-stream/session/" + sessionID + "/update", ClientToken: "test-token",
-			Data: map[string]interface{}{"data": base64.StdEncoding.EncodeToString(plaintext[i:end])},
+			Path: "encrypt-stream/" + keyName + "/update", ClientToken: "test-token",
+			Data: map[string]interface{}{"session_id": sessionID, "data": base64.StdEncoding.EncodeToString(plaintext[i:end])},
 		}
 		resp, _ = b.HandleRequest(context.Background(), req)
 		encData, _ := base64.StdEncoding.DecodeString(resp.Data["data"].(string))
@@ -77,8 +77,8 @@ func streamEncryptWithPlugin(t *testing.T, b *backend, storage logical.Storage, 
 
 	req = &logical.Request{
 		Storage: storage, Operation: logical.UpdateOperation,
-		Path: "encrypt-stream/session/" + sessionID + "/finalize", ClientToken: "test-token",
-		Data: map[string]interface{}{},
+		Path: "encrypt-stream/" + keyName + "/finalize", ClientToken: "test-token",
+		Data: map[string]interface{}{"session_id": sessionID},
 	}
 	resp, _ = b.HandleRequest(context.Background(), req)
 	finalData, _ := base64.StdEncoding.DecodeString(resp.Data["data"].(string))
@@ -148,10 +148,11 @@ func TestGPG_DecryptStreamRoundTrip(t *testing.T) {
 		}
 		req = &logical.Request{
 			Storage: storage, Operation: logical.UpdateOperation,
-			Path:        "decrypt-stream/session/" + sessionID + "/update",
+			Path:        "decrypt-stream/test/update",
 			ClientToken: "test-token",
 			Data: map[string]interface{}{
-				"data": base64.StdEncoding.EncodeToString(ciphertext[i:end]),
+				"session_id": sessionID,
+				"data":       base64.StdEncoding.EncodeToString(ciphertext[i:end]),
 			},
 		}
 		resp, err = b.HandleRequest(context.Background(), req)
@@ -170,9 +171,9 @@ func TestGPG_DecryptStreamRoundTrip(t *testing.T) {
 	// Finalize
 	req = &logical.Request{
 		Storage: storage, Operation: logical.UpdateOperation,
-		Path:        "decrypt-stream/session/" + sessionID + "/finalize",
+		Path:        "decrypt-stream/test/finalize",
 		ClientToken: "test-token",
-		Data:        map[string]interface{}{},
+		Data:        map[string]interface{}{"session_id": sessionID},
 	}
 	resp, err = b.HandleRequest(context.Background(), req)
 	if err != nil {
@@ -244,9 +245,9 @@ func TestGPG_DecryptStreamFromStreamEncrypt(t *testing.T) {
 	// Finalize immediately (all data was sent in start)
 	req = &logical.Request{
 		Storage: storage, Operation: logical.UpdateOperation,
-		Path:        "decrypt-stream/session/" + sessionID + "/finalize",
+		Path:        "decrypt-stream/test/finalize",
 		ClientToken: "test-token",
-		Data:        map[string]interface{}{},
+		Data:        map[string]interface{}{"session_id": sessionID},
 	}
 	resp, err = b.HandleRequest(context.Background(), req)
 	if err != nil {
@@ -319,9 +320,9 @@ func TestGPG_DecryptStreamWithSigner(t *testing.T) {
 	// Finalize
 	req = &logical.Request{
 		Storage: storage, Operation: logical.UpdateOperation,
-		Path:        "decrypt-stream/session/" + sessionID + "/finalize",
+		Path:        "decrypt-stream/recipient/finalize",
 		ClientToken: "test-token",
-		Data:        map[string]interface{}{},
+		Data:        map[string]interface{}{"session_id": sessionID},
 	}
 	resp, err = b.HandleRequest(context.Background(), req)
 	if err != nil {
@@ -429,8 +430,8 @@ func TestGPG_DecryptStreamErrors(t *testing.T) {
 	// Non-existent session
 	req = &logical.Request{
 		Storage: storage, Operation: logical.UpdateOperation,
-		Path: "decrypt-stream/session/fakeid/update", ClientToken: "test-token",
-		Data: map[string]interface{}{"data": base64.StdEncoding.EncodeToString([]byte("data"))},
+		Path: "decrypt-stream/test/update", ClientToken: "test-token",
+		Data: map[string]interface{}{"session_id": "fakeid", "data": base64.StdEncoding.EncodeToString([]byte("data"))},
 	}
 	resp, err = b.HandleRequest(context.Background(), req)
 	if err == nil || !resp.IsError() {

@@ -57,8 +57,12 @@ func pathEncryptStreamStartWithSigner(b *backend) *framework.Path {
 
 func pathEncryptStreamUpdate(b *backend) *framework.Path {
 	return &framework.Path{
-		Pattern: "encrypt-stream/session/" + framework.GenericNameRegex("session_id") + "/update",
+		Pattern: "encrypt-stream/" + framework.GenericNameRegex("name") + "/update",
 		Fields: map[string]*framework.FieldSchema{
+			"name": {
+				Type:        framework.TypeString,
+				Description: "The key to encrypt to",
+			},
 			"session_id": {
 				Type:        framework.TypeString,
 				Description: "Session ID returned from the start endpoint",
@@ -80,8 +84,12 @@ func pathEncryptStreamUpdate(b *backend) *framework.Path {
 
 func pathEncryptStreamFinalize(b *backend) *framework.Path {
 	return &framework.Path{
-		Pattern: "encrypt-stream/session/" + framework.GenericNameRegex("session_id") + "/finalize",
+		Pattern: "encrypt-stream/" + framework.GenericNameRegex("name") + "/finalize",
 		Fields: map[string]*framework.FieldSchema{
+			"name": {
+				Type:        framework.TypeString,
+				Description: "The key to encrypt to",
+			},
 			"session_id": {
 				Type:        framework.TypeString,
 				Description: "Session ID returned from the start endpoint",
@@ -212,6 +220,9 @@ func (b *backend) pathEncryptStreamUpdateWrite(ctx context.Context, req *logical
 	if sess.clientTokenHash != hashClientToken(req.ClientToken) {
 		return logical.ErrorResponse("session belongs to a different client"), logical.ErrInvalidRequest
 	}
+	if sess.keyName != data.Get("name").(string) {
+		return logical.ErrorResponse("key name does not match session"), logical.ErrInvalidRequest
+	}
 
 	inputB64 := data.Get("data").(string)
 	input, err := base64.StdEncoding.DecodeString(inputB64)
@@ -266,6 +277,9 @@ func (b *backend) pathEncryptStreamFinalizeWrite(ctx context.Context, req *logic
 	}
 	if sess.clientTokenHash != hashClientToken(req.ClientToken) {
 		return logical.ErrorResponse("session belongs to a different client"), logical.ErrInvalidRequest
+	}
+	if sess.keyName != data.Get("name").(string) {
+		return logical.ErrorResponse("key name does not match session"), logical.ErrInvalidRequest
 	}
 
 	// Close the plainWriter — triggers MDC computation and final encrypted bytes
