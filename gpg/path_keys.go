@@ -235,7 +235,7 @@ func (b *backend) pathKeyCreate(ctx context.Context, req *logical.Request, data 
 		}
 		el, err := openpgp.ReadArmoredKeyRing(strings.NewReader(key))
 		if err != nil {
-			return logical.ErrorResponse(err.Error()), nil
+			return logical.ErrorResponse("key import failed: invalid or unsupported key format"), nil
 		}
 		if len(el) == 0 {
 			return logical.ErrorResponse("no keys found in input"), nil

@@ -122,7 +122,7 @@ func (b *backend) pathSignStreamStartWrite(ctx context.Context, req *logical.Req
 	case "sha2-512":
 		config.DefaultHash = crypto.SHA512
 	default:
-		return logical.ErrorResponse(fmt.Sprintf("unsupported algorithm %s", algorithm)), nil
+		return logical.ErrorResponse("unsupported algorithm; must be \"sha2-224\", \"sha2-256\", \"sha2-384\", or \"sha2-512\""), nil
 	}
 
 	format := data.Get("format").(string)
@@ -130,7 +130,7 @@ func (b *backend) pathSignStreamStartWrite(ctx context.Context, req *logical.Req
 	case "base64":
 	case "ascii-armor":
 	default:
-		return logical.ErrorResponse(fmt.Sprintf("unsupported encoding format %s; must be \"base64\" or \"ascii-armor\"", format)), nil
+		return logical.ErrorResponse("unsupported encoding format; must be \"base64\" or \"ascii-armor\""), nil
 	}
 
 	// Load the signing key

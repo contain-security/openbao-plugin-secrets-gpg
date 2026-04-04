@@ -7,7 +7,7 @@ import (
 	"github.com/openbao/openbao/sdk/v2/logical"
 )
 
-func TestGPG_ExportNotExistingKeyReturnsNotFound(t *testing.T) {
+func TestGPG_ExportNotExistingKeyReturnsError(t *testing.T) {
 	storage := &logical.InmemStorage{}
 
 	b := Backend()
@@ -18,13 +18,15 @@ func TestGPG_ExportNotExistingKeyReturnsNotFound(t *testing.T) {
 		Path:      "export/test",
 	}
 	rsp, err := b.HandleRequest(context.Background(), req)
-
-	if rsp != nil || err != nil {
-		t.Fatal("Key does not exist but does not return not found")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rsp == nil || !rsp.IsError() {
+		t.Fatal("expected error for non-existent key")
 	}
 }
 
-func TestGPG_ExportNotExportableKeyReturnsNotFound(t *testing.T) {
+func TestGPG_ExportNotExportableKeyReturnsError(t *testing.T) {
 	storage := &logical.InmemStorage{}
 
 	b := Backend()

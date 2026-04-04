@@ -82,7 +82,7 @@ func (b *backend) pathShowSessionKeyWrite(ctx context.Context, req *logical.Requ
 	case "base64":
 	case "ascii-armor":
 	default:
-		return logical.ErrorResponse(fmt.Sprintf("unsupported encoding format %s; must be \"base64\" or \"ascii-armor\"", format)), nil
+		return logical.ErrorResponse("unsupported encoding format; must be \"base64\" or \"ascii-armor\""), nil
 	}
 
 	keyEntry, err := b.key(ctx, req.Storage, data.Get("name").(string))
