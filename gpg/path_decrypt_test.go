@@ -1,9 +1,12 @@
 package gpg
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"testing"
 
+	"github.com/ProtonMail/go-crypto/openpgp/packet"
 	"github.com/openbao/openbao/sdk/v2/logical"
 )
 
@@ -134,6 +137,85 @@ func TestGPG_DecryptError(t *testing.T) {
 
 	// Message is not signed but signer is set via URL
 	decryptMustFail("test", encryptedMessageASCIIArmored, "ascii-armor", "testGenerated")
+}
+
+func TestGPG_DecryptRejectsNonMDCMessage(t *testing.T) {
+	// Verify that messages without MDC (integrity protection) are rejected.
+	// go-crypto rejects SE packets (tag 9, IntegrityProtected=false) by default
+	// when config.AllowUnauthenticatedMessages() is false (the nil-config default).
+	// This test ensures we don't accidentally pass a config that allows them.
+	storage := &logical.InmemStorage{}
+	b := Backend()
+
+	// Create a key
+	_, err := b.HandleRequest(context.Background(), &logical.Request{
+		Storage:   storage,
+		Operation: logical.UpdateOperation,
+		Path:      "keys/mdctest",
+		Data:      map[string]interface{}{"real_name": "MDC Test"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Get the entity to encrypt to
+	keyEntry, err := b.key(context.Background(), storage, "mdctest")
+	if err != nil {
+		t.Fatal(err)
+	}
+	entity, err := b.entity(keyEntry)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Build a message with a valid PKESK header followed by a non-MDC SE packet.
+	// 1. Write a valid EncryptedKey (PKESK) packet for the test key
+	// 2. Write a SymmetricallyEncrypted packet (tag 9) WITHOUT integrity protection
+	var buf bytes.Buffer
+	config := &packet.Config{DefaultCipher: packet.CipherAES128}
+
+	encKey, ok := entity.EncryptionKey(config.Now())
+	if !ok {
+		t.Fatal("no encryption key found")
+	}
+
+	sessionKey := make([]byte, 16)
+	for i := range sessionKey {
+		sessionKey[i] = byte(i + 1)
+	}
+	err = packet.SerializeEncryptedKey(&buf, encKey.PublicKey, packet.CipherAES128, sessionKey, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Manually write a SE packet (tag 9) header — this is the non-MDC format.
+	// Tag 9 = 0xC9 (new format), followed by a partial body or indeterminate length.
+	// We write a short deterministic packet with old-format tag byte.
+	// Old format: bit 7=1, bit 6=0, tag=9 (bits 5-2 = 0b1001), length type=0 (1-byte length)
+	// = 1_0_1001_00 = 0xA4, then 1-byte length, then the encrypted body.
+	//
+	// The encrypted body for CFB mode starts with blockSize+2 bytes of random prefix.
+	// We just write garbage — ReadMessage will parse the PKESK, decrypt the session
+	// key, then hit the SE packet and reject it for lacking integrity protection.
+	seBody := bytes.Repeat([]byte{0xAA}, 32)
+	buf.WriteByte(0xA4)           // old-format tag 9, 1-byte length
+	buf.WriteByte(byte(len(seBody))) // length
+	buf.Write(seBody)
+
+	// Try to decrypt — should fail
+	ciphertext := base64.StdEncoding.EncodeToString(buf.Bytes())
+	resp, _ := b.HandleRequest(context.Background(), &logical.Request{
+		Storage:   storage,
+		Operation: logical.UpdateOperation,
+		Path:      "decrypt/mdctest",
+		Data: map[string]interface{}{
+			"ciphertext": ciphertext,
+			"format":     "base64",
+		},
+	})
+	if resp == nil || !resp.IsError() {
+		t.Fatal("expected non-MDC message to be rejected")
+	}
 }
 
 //nolint:gosec
