@@ -137,13 +137,13 @@ func (b *backend) pathDecryptWrite(ctx context.Context, req *logical.Request, da
 	w := base64.NewEncoder(base64.StdEncoding, &plaintext)
 	n, err := io.Copy(w, io.LimitReader(md.UnverifiedBody, defaultMaxPlaintextSize+1))
 	if err != nil {
-		return nil, err
+		return logical.ErrorResponse("decryption failed"), logical.ErrInvalidRequest
 	}
 	if n > defaultMaxPlaintextSize {
 		return logical.ErrorResponse("decrypted plaintext exceeds maximum size"), logical.ErrInvalidRequest
 	}
 	if err = w.Close(); err != nil {
-		return nil, err
+		return logical.ErrorResponse("decryption failed"), logical.ErrInvalidRequest
 	}
 
 	if signerKeyName != "" && (!md.IsSigned || md.SignedBy == nil || md.SignatureError != nil) {

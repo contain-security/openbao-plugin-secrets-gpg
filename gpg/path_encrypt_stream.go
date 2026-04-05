@@ -232,11 +232,15 @@ func (b *backend) pathEncryptStreamUpdateWrite(ctx context.Context, req *logical
 	inputB64 := data.Get("data").(string)
 	input, err := base64.StdEncoding.DecodeString(inputB64)
 	if err != nil {
-		return logical.ErrorResponse(fmt.Sprintf("unable to decode data as base64: %s", err)), logical.ErrInvalidRequest
+		return logical.ErrorResponse("unable to decode data: invalid base64 encoding"), logical.ErrInvalidRequest
 	}
 	if len(input) > defaultMaxChunkSize {
 		return logical.ErrorResponse(fmt.Sprintf("chunk exceeds maximum size of %d bytes", defaultMaxChunkSize)), logical.ErrInvalidRequest
 	}
+	if sess.encrypt.totalBytesIn+int64(len(input)) > defaultMaxStreamBytes {
+		return logical.ErrorResponse("streaming session byte limit exceeded"), logical.ErrInvalidRequest
+	}
+	sess.encrypt.totalBytesIn += int64(len(input))
 
 	// Write plaintext to the encrypt writer — this triggers encryption
 	// and writes to the outputBuf via lockedWriter.

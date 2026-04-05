@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto"
 	"encoding/base64"
-	"fmt"
 	"io"
 
 	"github.com/ProtonMail/go-crypto/openpgp"
@@ -79,7 +78,10 @@ func (b *backend) pathEncryptWrite(ctx context.Context, req *logical.Request, da
 	plaintextB64 := data.Get("plaintext").(string)
 	plaintext, err := base64.StdEncoding.DecodeString(plaintextB64)
 	if err != nil {
-		return logical.ErrorResponse(fmt.Sprintf("unable to decode plaintext as base64: %s", err)), logical.ErrInvalidRequest
+		return logical.ErrorResponse("unable to decode plaintext: invalid base64 encoding"), logical.ErrInvalidRequest
+	}
+	if len(plaintext) > defaultMaxPlaintextSize {
+		return logical.ErrorResponse("plaintext exceeds maximum size"), logical.ErrInvalidRequest
 	}
 
 	format := data.Get("format").(string)

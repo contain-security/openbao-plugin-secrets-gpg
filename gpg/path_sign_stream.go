@@ -231,10 +231,13 @@ func (b *backend) pathSignStreamUpdateWrite(ctx context.Context, req *logical.Re
 	inputB64 := data.Get("input").(string)
 	input, err := base64.StdEncoding.DecodeString(inputB64)
 	if err != nil {
-		return logical.ErrorResponse(fmt.Sprintf("unable to decode input as base64: %s", err)), logical.ErrInvalidRequest
+		return logical.ErrorResponse("unable to decode input: invalid base64 encoding"), logical.ErrInvalidRequest
 	}
 	if len(input) > defaultMaxChunkSize {
 		return logical.ErrorResponse(fmt.Sprintf("chunk exceeds maximum size of %d bytes", defaultMaxChunkSize)), logical.ErrInvalidRequest
+	}
+	if sess.sign.bytesReceived+int64(len(input)) > defaultMaxStreamBytes {
+		return logical.ErrorResponse("streaming session byte limit exceeded"), logical.ErrInvalidRequest
 	}
 
 	n, err := sess.sign.hash.Write(input)

@@ -22,7 +22,8 @@ const (
 	defaultMaxSessions          = 64
 	defaultMaxSessionsPerClient = 4
 	defaultMaxChunkSize         = 4 * 1024 * 1024  // 4MB decoded
-	defaultMaxPlaintextSize  = 32 * 1024 * 1024 // 32MB — limit on decrypted plaintext to prevent decompression bombs
+	defaultMaxPlaintextSize  = 32 * 1024 * 1024  // 32MB — limit on decrypted plaintext to prevent decompression bombs
+	defaultMaxStreamBytes    = 512 * 1024 * 1024 // 512MB — total bytes per streaming session
 	sessionCleanupInterval   = 30 * time.Second
 )
 
@@ -76,6 +77,7 @@ type encryptSessionState struct {
 	outputBuf     bytes.Buffer
 	goroutineDone chan struct{}
 	goroutineErr  error
+	totalBytesIn  int64
 }
 
 // decryptSessionState holds the goroutine-bridged state for streaming decrypt.
@@ -209,6 +211,16 @@ func (s *sessionStore) cleanup() int {
 		}
 		return true
 	})
+
+	// Sweep stale per-client counters (zero means no active sessions).
+	s.clientCounts.Range(func(key, value any) bool {
+		counter := value.(*atomic.Int64)
+		if counter.Load() == 0 {
+			s.clientCounts.Delete(key)
+		}
+		return true
+	})
+
 	return removed
 }
 
@@ -227,27 +239,20 @@ func (s *sessionStore) cleanupSessionResources(sess *streamSession) {
 	}
 }
 
-// terminateSession cleans up resources for a session (closes pipes, etc).
+// terminateSession marks a session done under lock, then cleans up resources
+// without the lock held. This avoids holding sess.mu during potentially
+// blocking I/O (e.g. bpw.Close() waiting for the drain goroutine).
 func (s *sessionStore) terminateSession(sess *streamSession) {
 	sess.mu.Lock()
-	defer sess.mu.Unlock()
-
 	if sess.done {
+		sess.mu.Unlock()
 		return
 	}
 	sess.done = true
 	sess.err = fmt.Errorf("session expired")
+	sess.mu.Unlock()
 
-	switch sess.sessionType {
-	case sessionTypeEncrypt:
-		if sess.encrypt != nil && sess.encrypt.plainWriter != nil {
-			sess.encrypt.plainWriter.Close()
-		}
-	case sessionTypeDecrypt:
-		if sess.decrypt != nil && sess.decrypt.bpw != nil {
-			sess.decrypt.bpw.Close()
-		}
-	}
+	s.cleanupSessionResources(sess)
 }
 
 // terminateSessionsByKeyName terminates and removes all sessions that
