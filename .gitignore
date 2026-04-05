@@ -1,11 +1,8 @@
-# Local OpenBao repo (SDK source + bao binary)
-openbao/
-
-# Cloned upstream vault-gpg-plugin for reference
-references/
+# Claude Code workspace
+.claude/
 
 # Plugin build output
-openbao-plugin-secrets-gpg/dist/
+dist/
 
 # Test-bed runtime artifacts
 test-bed/openbao-instance/data/
