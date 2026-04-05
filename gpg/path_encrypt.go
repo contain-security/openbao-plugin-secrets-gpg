@@ -3,6 +3,7 @@ package gpg
 import (
 	"bytes"
 	"context"
+	"crypto"
 	"encoding/base64"
 	"fmt"
 	"io"
@@ -138,6 +139,7 @@ func (b *backend) pathEncryptWrite(ctx context.Context, req *logical.Request, da
 
 	plainWriter, err := openpgp.Encrypt(out, []*openpgp.Entity{recipientEntity}, signerEntity, nil, &packet.Config{
 		DefaultCipher: packet.CipherAES256,
+		DefaultHash:   crypto.SHA256,
 	})
 	if err != nil {
 		return nil, err

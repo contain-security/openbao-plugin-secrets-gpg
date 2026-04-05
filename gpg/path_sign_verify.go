@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/ProtonMail/go-crypto/openpgp"
-	"github.com/ProtonMail/go-crypto/openpgp/armor"
 	"github.com/ProtonMail/go-crypto/openpgp/packet"
 	"github.com/openbao/openbao/sdk/v2/framework"
 	"github.com/openbao/openbao/sdk/v2/logical"
@@ -142,34 +141,24 @@ func (b *backend) pathSignWrite(ctx context.Context, req *logical.Request, data 
 
 	message := bytes.NewReader(input)
 
-	var armoredSignatureBuffer bytes.Buffer
-	err = openpgp.ArmoredDetachSign(&armoredSignatureBuffer, entity, message, &config)
-	if err != nil {
-		return nil, err
-	}
-
 	var outputSignature bytes.Buffer
 	switch format {
 	case "ascii-armor":
-		outputSignature = armoredSignatureBuffer
+		err = openpgp.ArmoredDetachSign(&outputSignature, entity, message, &config)
+		if err != nil {
+			return nil, err
+		}
 	case "base64":
-		block, err := armor.Decode(bytes.NewReader(armoredSignatureBuffer.Bytes()))
+		var rawSig bytes.Buffer
+		err = openpgp.DetachSign(&rawSig, entity, message, &config)
 		if err != nil {
 			return nil, err
 		}
-
 		encoder := base64.NewEncoder(base64.StdEncoding, &outputSignature)
-		bufBody := &bytes.Buffer{}
-		_, err = bufBody.ReadFrom(block.Body)
-		if err != nil {
+		if _, err = encoder.Write(rawSig.Bytes()); err != nil {
 			return nil, err
 		}
-		_, err = encoder.Write(bufBody.Bytes())
-		if err != nil {
-			return nil, err
-		}
-		err = encoder.Close()
-		if err != nil {
+		if err = encoder.Close(); err != nil {
 			return nil, err
 		}
 	}
