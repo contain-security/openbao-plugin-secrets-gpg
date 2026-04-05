@@ -264,7 +264,7 @@ func (b *backend) pathDecryptStreamStartWrite(ctx context.Context, req *logical.
 	}
 	initialData, err := base64.StdEncoding.DecodeString(initialB64)
 	if err != nil {
-		return logical.ErrorResponse(fmt.Sprintf("unable to decode data as base64: %s", err)), logical.ErrInvalidRequest
+		return logical.ErrorResponse("unable to decode data: invalid base64 encoding"), logical.ErrInvalidRequest
 	}
 
 	sessionID, err := generateSessionID()
@@ -382,10 +382,9 @@ func (b *backend) pathDecryptStreamStartWrite(ctx context.Context, req *logical.
 	// Check for errors
 	decState.outputMu.Lock()
 	if decState.goroutineErr != nil {
-		err := decState.goroutineErr
 		decState.outputMu.Unlock()
 		b.streamSessions.remove(sessionID)
-		return logical.ErrorResponse(err.Error()), logical.ErrInvalidRequest
+		return logical.ErrorResponse("decryption failed"), logical.ErrInvalidRequest
 	}
 
 	// Drain any initial plaintext
@@ -442,7 +441,7 @@ func (b *backend) pathDecryptStreamUpdateWrite(ctx context.Context, req *logical
 	inputB64 := data.Get("data").(string)
 	input, err := base64.StdEncoding.DecodeString(inputB64)
 	if err != nil {
-		return logical.ErrorResponse(fmt.Sprintf("unable to decode data as base64: %s", err)), logical.ErrInvalidRequest
+		return logical.ErrorResponse("unable to decode data: invalid base64 encoding"), logical.ErrInvalidRequest
 	}
 	if len(input) > defaultMaxChunkSize {
 		return logical.ErrorResponse(fmt.Sprintf("chunk exceeds maximum size of %d bytes", defaultMaxChunkSize)), logical.ErrInvalidRequest

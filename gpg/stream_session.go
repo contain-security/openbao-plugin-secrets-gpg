@@ -211,6 +211,16 @@ func (s *sessionStore) cleanup() int {
 		}
 		return true
 	})
+
+	// Sweep stale per-client counters (zero means no active sessions).
+	s.clientCounts.Range(func(key, value any) bool {
+		counter := value.(*atomic.Int64)
+		if counter.Load() == 0 {
+			s.clientCounts.Delete(key)
+		}
+		return true
+	})
+
 	return removed
 }
 

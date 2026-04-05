@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto"
 	"encoding/base64"
-	"fmt"
 	"strings"
 
 	"github.com/ProtonMail/go-crypto/openpgp"
@@ -94,7 +93,10 @@ func (b *backend) pathSignWrite(ctx context.Context, req *logical.Request, data 
 	inputB64 := data.Get("input").(string)
 	input, err := base64.StdEncoding.DecodeString(inputB64)
 	if err != nil {
-		return logical.ErrorResponse(fmt.Sprintf("unable to decode input as base64: %s", err)), logical.ErrInvalidRequest
+		return logical.ErrorResponse("unable to decode input: invalid base64 encoding"), logical.ErrInvalidRequest
+	}
+	if len(input) > defaultMaxPlaintextSize {
+		return logical.ErrorResponse("input exceeds maximum size"), logical.ErrInvalidRequest
 	}
 
 	config := packet.Config{}
@@ -174,7 +176,10 @@ func (b *backend) pathVerifyWrite(ctx context.Context, req *logical.Request, dat
 	inputB64 := data.Get("input").(string)
 	input, err := base64.StdEncoding.DecodeString(inputB64)
 	if err != nil {
-		return logical.ErrorResponse(fmt.Sprintf("unable to decode input as base64: %s", err)), logical.ErrInvalidRequest
+		return logical.ErrorResponse("unable to decode input: invalid base64 encoding"), logical.ErrInvalidRequest
+	}
+	if len(input) > defaultMaxPlaintextSize {
+		return logical.ErrorResponse("input exceeds maximum size"), logical.ErrInvalidRequest
 	}
 
 	format := data.Get("format").(string)

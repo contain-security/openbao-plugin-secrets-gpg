@@ -100,11 +100,15 @@ func (b *backend) key(ctx context.Context, s logical.Storage, name string) (*key
 
 	// Backward compat: keys stored before HasPrivateKey was added will
 	// deserialize with HasPrivateKey=false. Probe the serialized key to
-	// detect whether a private key is actually present.
+	// detect whether a private key is actually present, then persist the
+	// correction so the probe doesn't run on every subsequent access.
 	if !result.HasPrivateKey && len(result.SerializedKey) > 0 {
 		r := bytes.NewReader(result.SerializedKey)
 		if el, err := openpgp.ReadKeyRing(r); err == nil && len(el) > 0 && el[0].PrivateKey != nil {
 			result.HasPrivateKey = true
+			// Best-effort write-back; ignore errors — the in-memory value
+			// is correct for this request regardless.
+			_ = b.storeKeyEntry(ctx, s, name, &result)
 		}
 	}
 
