@@ -98,6 +98,16 @@ func (b *backend) key(ctx context.Context, s logical.Storage, name string) (*key
 		return nil, err
 	}
 
+	// Backward compat: keys stored before HasPrivateKey was added will
+	// deserialize with HasPrivateKey=false. Probe the serialized key to
+	// detect whether a private key is actually present.
+	if !result.HasPrivateKey && len(result.SerializedKey) > 0 {
+		r := bytes.NewReader(result.SerializedKey)
+		if el, err := openpgp.ReadKeyRing(r); err == nil && len(el) > 0 && el[0].PrivateKey != nil {
+			result.HasPrivateKey = true
+		}
+	}
+
 	return &result, nil
 }
 
@@ -106,6 +116,9 @@ func (b *backend) entity(entry *keyEntry) (*openpgp.Entity, error) {
 	el, err := openpgp.ReadKeyRing(r)
 	if err != nil {
 		return nil, err
+	}
+	if len(el) == 0 {
+		return nil, fmt.Errorf("no entities found in stored key")
 	}
 
 	return el[0], nil
@@ -172,9 +185,10 @@ func (b *backend) pathKeyRead(ctx context.Context, req *logical.Request, data *f
 
 	return &logical.Response{
 		Data: map[string]interface{}{
-			"fingerprint": hex.EncodeToString(entity.PrimaryKey.Fingerprint[:]),
-			"public_key":  string(buf),
-			"exportable":  entry.Exportable,
+			"fingerprint":     hex.EncodeToString(entity.PrimaryKey.Fingerprint[:]),
+			"public_key":      string(buf),
+			"exportable":      entry.Exportable,
+			"has_private_key": entry.HasPrivateKey,
 		},
 	}, nil
 }
@@ -204,8 +218,8 @@ func (b *backend) pathKeyCreate(ctx context.Context, req *logical.Request, data 
 	var buf bytes.Buffer
 	switch generate {
 	case true:
-		if keyBits < 2048 {
-			return logical.ErrorResponse("Keys < 2048 bits are unsafe and not supported"), nil
+		if keyBits < 2048 || keyBits > 4096 {
+			return logical.ErrorResponse("key_bits must be between 2048 and 4096"), nil
 		}
 		config := packet.Config{
 			RSABits: keyBits,
@@ -222,19 +236,40 @@ func (b *backend) pathKeyCreate(ctx context.Context, req *logical.Request, data 
 		if key == "" {
 			return logical.ErrorResponse("the key value is required for generated keys"), nil
 		}
+		const maxImportedKeySize = 256 * 1024 // 256KB
+		if len(key) > maxImportedKeySize {
+			return logical.ErrorResponse("imported key exceeds maximum size"), nil
+		}
 		el, err := openpgp.ReadArmoredKeyRing(strings.NewReader(key))
 		if err != nil {
-			return logical.ErrorResponse(err.Error()), nil
+			return logical.ErrorResponse("key import failed: invalid or unsupported key format"), nil
 		}
-		err = serializePrivateWithoutSigning(&buf, el[0])
-		if err != nil {
-			return logical.ErrorResponse("the key could not be serialized, is a private key present?"), nil
+		if len(el) == 0 {
+			return logical.ErrorResponse("no keys found in input"), nil
 		}
+		hasPrivate := el[0].PrivateKey != nil
+		if hasPrivate {
+			err = serializePrivateWithoutSigning(&buf, el[0])
+			if err != nil {
+				return logical.ErrorResponse("the key could not be serialized"), nil
+			}
+		} else {
+			err = el[0].Serialize(&buf)
+			if err != nil {
+				return logical.ErrorResponse("the key could not be serialized"), nil
+			}
+		}
+		return nil, b.storeKeyEntry(ctx, req.Storage, name, &keyEntry{
+			SerializedKey: buf.Bytes(),
+			Exportable:    exportable,
+			HasPrivateKey: hasPrivate,
+		})
 	}
 
 	return nil, b.storeKeyEntry(ctx, req.Storage, name, &keyEntry{
 		SerializedKey: buf.Bytes(),
 		Exportable:    exportable,
+		HasPrivateKey: true,
 	})
 }
 
@@ -257,6 +292,10 @@ func (b *backend) pathKeyDelete(ctx context.Context, req *logical.Request, data 
 	if err != nil {
 		return nil, err
 	}
+
+	// Terminate any active streaming sessions that reference this key.
+	b.streamSessions.terminateSessionsByKeyName(name)
+
 	return nil, nil
 }
 
@@ -272,6 +311,7 @@ func (b *backend) pathKeyList(
 type keyEntry struct {
 	SerializedKey []byte
 	Exportable    bool
+	HasPrivateKey bool
 }
 
 const pathPolicyHelpSyn = "Managed named GPG keys"

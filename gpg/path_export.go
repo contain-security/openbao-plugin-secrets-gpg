@@ -35,11 +35,8 @@ func (b *backend) pathExportKeyRead(ctx context.Context, req *logical.Request, d
 	if err != nil {
 		return nil, err
 	}
-	if entry == nil {
-		return nil, nil
-	}
-	if !entry.Exportable {
-		return logical.ErrorResponse("key is not exportable"), nil
+	if entry == nil || !entry.Exportable || !entry.HasPrivateKey {
+		return logical.ErrorResponse("key not found or not exportable"), nil
 	}
 
 	var buf bytes.Buffer

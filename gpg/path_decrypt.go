@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
-	"fmt"
 	"io"
 	"strings"
 
@@ -31,9 +30,37 @@ func pathDecrypt(b *backend) *framework.Path {
 				Default:     "base64",
 				Description: `Encoding format the ciphertext uses. Can be "base64" or "ascii-armor". Defaults to "base64".`,
 			},
-			"signer_key_name": {
+		},
+		Operations: map[logical.Operation]framework.OperationHandler{
+			logical.UpdateOperation: &framework.PathOperation{
+				Callback: b.pathDecryptWrite,
+			},
+		},
+		HelpSynopsis:    pathDecryptHelpSyn,
+		HelpDescription: pathDecryptHelpDesc,
+	}
+}
+
+func pathDecryptWithSigner(b *backend) *framework.Path {
+	return &framework.Path{
+		Pattern: "decrypt/" + framework.GenericNameRegex("name") + "/sign/" + framework.GenericNameRegex("signer_name"),
+		Fields: map[string]*framework.FieldSchema{
+			"name": {
 				Type:        framework.TypeString,
-				Description: "Name of a GPG key stored in OpenBao whose public key is used to verify the signature on the ciphertext. If present, the signature must be valid.",
+				Description: "The key to use for decryption",
+			},
+			"signer_name": {
+				Type:        framework.TypeString,
+				Description: "The GPG key to verify the signature against (from URL path)",
+			},
+			"ciphertext": {
+				Type:        framework.TypeString,
+				Description: "The ciphertext to decrypt",
+			},
+			"format": {
+				Type:        framework.TypeString,
+				Default:     "base64",
+				Description: `Encoding format the ciphertext uses. Can be "base64" or "ascii-armor". Defaults to "base64".`,
 			},
 		},
 		Operations: map[logical.Operation]framework.OperationHandler{
@@ -52,7 +79,7 @@ func (b *backend) pathDecryptWrite(ctx context.Context, req *logical.Request, da
 	case "base64":
 	case "ascii-armor":
 	default:
-		return logical.ErrorResponse(fmt.Sprintf("unsupported encoding format %s; must be \"base64\" or \"ascii-armor\"", format)), nil
+		return logical.ErrorResponse("unsupported encoding format; must be \"base64\" or \"ascii-armor\""), nil
 	}
 
 	keyEntry, err := b.key(ctx, req.Storage, data.Get("name").(string))
@@ -62,6 +89,9 @@ func (b *backend) pathDecryptWrite(ctx context.Context, req *logical.Request, da
 	if keyEntry == nil {
 		return logical.ErrorResponse("key not found"), logical.ErrInvalidRequest
 	}
+	if !keyEntry.HasPrivateKey {
+		return logical.ErrorResponse("decryption requires a key with private key material"), logical.ErrInvalidRequest
+	}
 
 	r := bytes.NewReader(keyEntry.SerializedKey)
 	keyring, err := openpgp.ReadKeyRing(r)
@@ -69,7 +99,7 @@ func (b *backend) pathDecryptWrite(ctx context.Context, req *logical.Request, da
 		return nil, err
 	}
 
-	signerKeyName := data.Get("signer_key_name").(string)
+	signerKeyName := resolveSignerKeyName(data)
 	if signerKeyName != "" {
 		signerEntry, err := b.key(ctx, req.Storage, signerKeyName)
 		if err != nil {
@@ -93,27 +123,31 @@ func (b *backend) pathDecryptWrite(ctx context.Context, req *logical.Request, da
 	case "ascii-armor":
 		block, err := armor.Decode(ciphertextEncoded)
 		if err != nil {
-			return logical.ErrorResponse(err.Error()), logical.ErrInvalidRequest
+			return logical.ErrorResponse("unable to decode armored ciphertext"), logical.ErrInvalidRequest
 		}
 		ciphertextDecoder = block.Body
 	}
 
 	md, err := openpgp.ReadMessage(ciphertextDecoder, keyring, nil, nil)
 	if err != nil {
-		return logical.ErrorResponse(err.Error()), logical.ErrInvalidRequest
+		return logical.ErrorResponse("decryption failed"), logical.ErrInvalidRequest
 	}
 
 	var plaintext bytes.Buffer
 	w := base64.NewEncoder(base64.StdEncoding, &plaintext)
-	if _, err = io.Copy(w, md.UnverifiedBody); err != nil {
+	n, err := io.Copy(w, io.LimitReader(md.UnverifiedBody, defaultMaxPlaintextSize+1))
+	if err != nil {
 		return nil, err
+	}
+	if n > defaultMaxPlaintextSize {
+		return logical.ErrorResponse("decrypted plaintext exceeds maximum size"), logical.ErrInvalidRequest
 	}
 	if err = w.Close(); err != nil {
 		return nil, err
 	}
 
 	if signerKeyName != "" && (!md.IsSigned || md.SignedBy == nil || md.SignatureError != nil) {
-		return logical.ErrorResponse("Signature is invalid or not present: %s", md.SignatureError), nil
+		return logical.ErrorResponse("signature verification failed"), nil
 	}
 
 	return &logical.Response{

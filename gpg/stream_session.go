@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"fmt"
 	"hash"
@@ -18,8 +19,10 @@ import (
 
 const (
 	defaultSessionTimeout    = 5 * time.Minute
-	defaultMaxSessions       = 64
-	defaultMaxChunkSize      = 4 * 1024 * 1024 // 4MB decoded
+	defaultMaxSessions          = 64
+	defaultMaxSessionsPerClient = 4
+	defaultMaxChunkSize         = 4 * 1024 * 1024  // 4MB decoded
+	defaultMaxPlaintextSize  = 32 * 1024 * 1024 // 32MB — limit on decrypted plaintext to prevent decompression bombs
 	sessionCleanupInterval   = 30 * time.Second
 )
 
@@ -101,16 +104,19 @@ func (lw *lockedWriter) Write(p []byte) (int, error) {
 
 // sessionStore manages streaming sessions on the backend.
 type sessionStore struct {
-	sessions     sync.Map
-	sessionCount atomic.Int64
-	maxSessions  int
-	timeout      time.Duration
+	sessions             sync.Map
+	sessionCount         atomic.Int64
+	clientCounts         sync.Map // clientTokenHash -> *atomic.Int64
+	maxSessions          int
+	maxSessionsPerClient int
+	timeout              time.Duration
 }
 
 func newSessionStore() *sessionStore {
 	return &sessionStore{
-		maxSessions: defaultMaxSessions,
-		timeout:     defaultSessionTimeout,
+		maxSessions:          defaultMaxSessions,
+		maxSessionsPerClient: defaultMaxSessionsPerClient,
+		timeout:              defaultSessionTimeout,
 	}
 }
 
@@ -127,13 +133,32 @@ func hashClientToken(token string) string {
 	return hex.EncodeToString(h[:])
 }
 
+func clientTokenMatches(stored, token string) bool {
+	return subtle.ConstantTimeCompare([]byte(stored), []byte(hashClientToken(token))) == 1
+}
+
+func (s *sessionStore) clientCounter(tokenHash string) *atomic.Int64 {
+	val, _ := s.clientCounts.LoadOrStore(tokenHash, &atomic.Int64{})
+	return val.(*atomic.Int64)
+}
+
 func (s *sessionStore) create(sess *streamSession) error {
-	// Atomic increment-then-check avoids TOCTOU race under concurrent creates.
+	// Global limit: atomic increment-then-check.
 	newCount := s.sessionCount.Add(1)
 	if int(newCount) > s.maxSessions {
 		s.sessionCount.Add(-1)
 		return fmt.Errorf("too many active streaming sessions (max %d)", s.maxSessions)
 	}
+
+	// Per-client limit: atomic increment-then-check on per-token counter.
+	counter := s.clientCounter(sess.clientTokenHash)
+	clientCount := counter.Add(1)
+	if int(clientCount) > s.maxSessionsPerClient {
+		counter.Add(-1)
+		s.sessionCount.Add(-1)
+		return fmt.Errorf("too many active sessions for this client (max %d)", s.maxSessionsPerClient)
+	}
+
 	s.sessions.Store(sess.id, sess)
 	return nil
 }
@@ -147,8 +172,10 @@ func (s *sessionStore) get(id string) (*streamSession, bool) {
 }
 
 func (s *sessionStore) remove(id string) {
-	if _, loaded := s.sessions.LoadAndDelete(id); loaded {
+	if val, loaded := s.sessions.LoadAndDelete(id); loaded {
+		sess := val.(*streamSession)
 		s.sessionCount.Add(-1)
+		s.clientCounter(sess.clientTokenHash).Add(-1)
 	}
 }
 
@@ -158,19 +185,46 @@ func (s *sessionStore) cleanup() int {
 	removed := 0
 	s.sessions.Range(func(key, value any) bool {
 		sess := value.(*streamSession)
+
+		// Hold sess.mu through the expiry check AND done marking so a
+		// concurrent update that refreshes lastAccess is not ignored.
 		sess.mu.Lock()
 		expired := now.Sub(sess.lastAccess) > s.timeout
+		if !expired || sess.done {
+			sess.mu.Unlock()
+			return true
+		}
+		sess.done = true
+		sess.err = fmt.Errorf("session expired")
 		sess.mu.Unlock()
-		if expired {
-			s.terminateSession(sess)
-			if _, loaded := s.sessions.LoadAndDelete(key); loaded {
-				s.sessionCount.Add(-1)
-				removed++
-			}
+
+		// Resource cleanup (pipe close, etc.) runs without sess.mu held
+		// to avoid blocking on I/O while holding the lock.
+		s.cleanupSessionResources(sess)
+
+		if _, loaded := s.sessions.LoadAndDelete(key); loaded {
+			s.sessionCount.Add(-1)
+			s.clientCounter(sess.clientTokenHash).Add(-1)
+			removed++
 		}
 		return true
 	})
 	return removed
+}
+
+// cleanupSessionResources closes pipes and other resources for a session
+// that has already been marked done. Must be called WITHOUT sess.mu held.
+func (s *sessionStore) cleanupSessionResources(sess *streamSession) {
+	switch sess.sessionType {
+	case sessionTypeEncrypt:
+		if sess.encrypt != nil && sess.encrypt.plainWriter != nil {
+			sess.encrypt.plainWriter.Close()
+		}
+	case sessionTypeDecrypt:
+		if sess.decrypt != nil && sess.decrypt.bpw != nil {
+			sess.decrypt.bpw.Close()
+		}
+	}
 }
 
 // terminateSession cleans up resources for a session (closes pipes, etc).
@@ -196,6 +250,26 @@ func (s *sessionStore) terminateSession(sess *streamSession) {
 	}
 }
 
+// terminateSessionsByKeyName terminates and removes all sessions that
+// reference the given key name. Returns the number of sessions terminated.
+func (s *sessionStore) terminateSessionsByKeyName(keyName string) int {
+	removed := 0
+	s.sessions.Range(func(key, value any) bool {
+		sess := value.(*streamSession)
+		if sess.keyName != keyName {
+			return true
+		}
+		s.terminateSession(sess)
+		if _, loaded := s.sessions.LoadAndDelete(key); loaded {
+			s.sessionCount.Add(-1)
+			s.clientCounter(sess.clientTokenHash).Add(-1)
+			removed++
+		}
+		return true
+	})
+	return removed
+}
+
 // killAll terminates all sessions (used on shutdown).
 func (s *sessionStore) killAll() {
 	s.sessions.Range(func(key, value any) bool {
@@ -203,6 +277,7 @@ func (s *sessionStore) killAll() {
 		s.terminateSession(sess)
 		if _, loaded := s.sessions.LoadAndDelete(key); loaded {
 			s.sessionCount.Add(-1)
+			s.clientCounter(sess.clientTokenHash).Add(-1)
 		}
 		return true
 	})

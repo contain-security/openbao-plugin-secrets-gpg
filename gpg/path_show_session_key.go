@@ -33,9 +33,37 @@ func pathShowSessionKey(b *backend) *framework.Path {
 				Default:     "base64",
 				Description: `Encoding format the ciphertext uses. Can be "base64" or "ascii-armor". Defaults to "base64".`,
 			},
-			"signer_key_name": {
+		},
+		Operations: map[logical.Operation]framework.OperationHandler{
+			logical.UpdateOperation: &framework.PathOperation{
+				Callback: b.pathShowSessionKeyWrite,
+			},
+		},
+		HelpSynopsis:    pathDecryptSessionKeyHelpSyn,
+		HelpDescription: pathDecryptSessionKeyHelpDesc,
+	}
+}
+
+func pathShowSessionKeyWithSigner(b *backend) *framework.Path {
+	return &framework.Path{
+		Pattern: "show-session-key/" + framework.GenericNameRegex("name") + "/sign/" + framework.GenericNameRegex("signer_name"),
+		Fields: map[string]*framework.FieldSchema{
+			"name": {
 				Type:        framework.TypeString,
-				Description: "Name of a GPG key stored in OpenBao whose public key is used to verify the signature on the ciphertext. If present, the signature must be valid.",
+				Description: "The key to use",
+			},
+			"signer_name": {
+				Type:        framework.TypeString,
+				Description: "The GPG key to verify the signature against (from URL path)",
+			},
+			"ciphertext": {
+				Type:        framework.TypeString,
+				Description: "The ciphertext to decrypt",
+			},
+			"format": {
+				Type:        framework.TypeString,
+				Default:     "base64",
+				Description: `Encoding format the ciphertext uses. Can be "base64" or "ascii-armor". Defaults to "base64".`,
 			},
 		},
 		Operations: map[logical.Operation]framework.OperationHandler{
@@ -54,7 +82,7 @@ func (b *backend) pathShowSessionKeyWrite(ctx context.Context, req *logical.Requ
 	case "base64":
 	case "ascii-armor":
 	default:
-		return logical.ErrorResponse(fmt.Sprintf("unsupported encoding format %s; must be \"base64\" or \"ascii-armor\"", format)), nil
+		return logical.ErrorResponse("unsupported encoding format; must be \"base64\" or \"ascii-armor\""), nil
 	}
 
 	keyEntry, err := b.key(ctx, req.Storage, data.Get("name").(string))
@@ -64,6 +92,9 @@ func (b *backend) pathShowSessionKeyWrite(ctx context.Context, req *logical.Requ
 	if keyEntry == nil {
 		return logical.ErrorResponse("key not found"), logical.ErrInvalidRequest
 	}
+	if !keyEntry.HasPrivateKey {
+		return logical.ErrorResponse("session key extraction requires a key with private key material"), logical.ErrInvalidRequest
+	}
 
 	r := bytes.NewReader(keyEntry.SerializedKey)
 	keyring, err := openpgp.ReadKeyRing(r)
@@ -71,7 +102,7 @@ func (b *backend) pathShowSessionKeyWrite(ctx context.Context, req *logical.Requ
 		return nil, err
 	}
 
-	signerKeyName := data.Get("signer_key_name").(string)
+	signerKeyName := resolveSignerKeyName(data)
 	if signerKeyName != "" {
 		signerEntry, err := b.key(ctx, req.Storage, signerKeyName)
 		if err != nil {
@@ -95,20 +126,24 @@ func (b *backend) pathShowSessionKeyWrite(ctx context.Context, req *logical.Requ
 	case "ascii-armor":
 		block, err := armor.Decode(ciphertextEncoded)
 		if err != nil {
-			return logical.ErrorResponse(err.Error()), logical.ErrInvalidRequest
+			return logical.ErrorResponse("unable to decode armored ciphertext"), logical.ErrInvalidRequest
 		}
 		ciphertextDecoder = block.Body
 	}
 
+	const maxPackets = 1024
 	var p packet.Packet
 	var sessionKey string
-	for {
+	for i := 0; ; i++ {
+		if i >= maxPackets {
+			return logical.ErrorResponse("unable to decrypt session key"), logical.ErrInvalidRequest
+		}
 		p, err = packet.Read(ciphertextDecoder)
 		if err == io.EOF {
-			return logical.ErrorResponse("Unable to decrypt session key"), nil
+			return logical.ErrorResponse("unable to decrypt session key"), nil
 		}
 		if err != nil {
-			return logical.ErrorResponse(err.Error()), logical.ErrInvalidRequest
+			return logical.ErrorResponse("unable to decrypt session key"), logical.ErrInvalidRequest
 		}
 		switch p := p.(type) {
 		case *packet.EncryptedKey:

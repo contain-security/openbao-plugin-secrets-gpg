@@ -36,8 +36,11 @@ func Backend() *backend {
 			pathSign(&b),
 			pathVerify(&b),
 			pathDecrypt(&b),
+			pathDecryptWithSigner(&b),
 			pathShowSessionKey(&b),
+			pathShowSessionKeyWithSigner(&b),
 			pathEncrypt(&b),
+			pathEncryptWithSigner(&b),
 			pathConfig(&b),
 			// Streaming sign
 			pathSignStreamStart(&b),
@@ -45,10 +48,12 @@ func Backend() *backend {
 			pathSignStreamFinalize(&b),
 			// Streaming encrypt
 			pathEncryptStreamStart(&b),
+			pathEncryptStreamStartWithSigner(&b),
 			pathEncryptStreamUpdate(&b),
 			pathEncryptStreamFinalize(&b),
 			// Streaming decrypt
 			pathDecryptStreamStart(&b),
+			pathDecryptStreamStartWithSigner(&b),
 			pathDecryptStreamUpdate(&b),
 			pathDecryptStreamFinalize(&b),
 		},
@@ -80,6 +85,17 @@ func (b *backend) cleanup(_ context.Context) {
 	if b.streamSessions != nil {
 		b.streamSessions.killAll()
 	}
+}
+
+// resolveSignerKeyName returns the signer key name from the URL path parameter
+// "signer_name". This is the only source — the signer key is always in the URL.
+func resolveSignerKeyName(data *framework.FieldData) string {
+	if v, ok := data.GetOk("signer_name"); ok {
+		if s := v.(string); s != "" {
+			return s
+		}
+	}
+	return ""
 }
 
 const backendHelp = `

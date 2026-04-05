@@ -32,13 +32,13 @@ stream_encrypt_file() {
 
         dd if="$infile" bs=1 skip=$offset count=$read_size 2>/dev/null | base64 -w0 > "$TMPDIR/_chunk.b64"
         local resp
-        resp=$($BAO write -format=json "gpg/encrypt-stream/session/$sid/update" data=@"$TMPDIR/_chunk.b64" 2>&1)
+        resp=$($BAO write -format=json "gpg/encrypt-stream/$key/update" session_id="$sid" data=@"$TMPDIR/_chunk.b64" 2>&1)
         echo -n "$(echo "$resp" | jq -r '.data.data')" | base64 -d >> "$outfile"
         offset=$((offset + read_size))
     done
 
     local fin_resp
-    fin_resp=$($BAO write -force -format=json "gpg/encrypt-stream/session/$sid/finalize" 2>&1)
+    fin_resp=$($BAO write -force -format=json "gpg/encrypt-stream/$key/finalize" session_id="$sid" 2>&1)
     echo -n "$(echo "$fin_resp" | jq -r '.data.data')" | base64 -d >> "$outfile"
 }
 
@@ -47,7 +47,7 @@ stream_encrypt_file_signed() {
     local key="$1" infile="$2" outfile="$3" signer="$4" chunk_size="${5:-8192}"
 
     local start_resp sid
-    start_resp=$($BAO write -format=json "gpg/encrypt-stream/$key/start" signer_key_name="$signer" 2>&1)
+    start_resp=$($BAO write -force -format=json "gpg/encrypt-stream/$key/sign/$signer/start" 2>&1)
     sid=$(echo "$start_resp" | jq -r '.data.session_id')
     echo -n "$(echo "$start_resp" | jq -r '.data.data')" | base64 -d > "$outfile"
 
@@ -61,13 +61,13 @@ stream_encrypt_file_signed() {
 
         dd if="$infile" bs=1 skip=$offset count=$read_size 2>/dev/null | base64 -w0 > "$TMPDIR/_chunk.b64"
         local resp
-        resp=$($BAO write -format=json "gpg/encrypt-stream/session/$sid/update" data=@"$TMPDIR/_chunk.b64" 2>&1)
+        resp=$($BAO write -format=json "gpg/encrypt-stream/$key/update" session_id="$sid" data=@"$TMPDIR/_chunk.b64" 2>&1)
         echo -n "$(echo "$resp" | jq -r '.data.data')" | base64 -d >> "$outfile"
         offset=$((offset + read_size))
     done
 
     local fin_resp
-    fin_resp=$($BAO write -force -format=json "gpg/encrypt-stream/session/$sid/finalize" 2>&1)
+    fin_resp=$($BAO write -force -format=json "gpg/encrypt-stream/$key/finalize" session_id="$sid" 2>&1)
     echo -n "$(echo "$fin_resp" | jq -r '.data.data')" | base64 -d >> "$outfile"
 }
 
@@ -104,8 +104,8 @@ echo -n "$PLAINTEXT" > "$TMPDIR/pt_signed.txt"
 stream_encrypt_file_signed "stream-enc-test" "$TMPDIR/pt_signed.txt" "$TMPDIR/ct_signed.bin" "stream-signer"
 
 base64 -w0 "$TMPDIR/ct_signed.bin" > "$TMPDIR/ct_signed.b64"
-RECOVERED_B64=$($BAO write -field=plaintext gpg/decrypt/stream-enc-test \
-    ciphertext=@"$TMPDIR/ct_signed.b64" format=base64 signer_key_name=stream-signer 2>&1)
+RECOVERED_B64=$($BAO write -field=plaintext gpg/decrypt/stream-enc-test/sign/stream-signer \
+    ciphertext=@"$TMPDIR/ct_signed.b64" format=base64 2>&1)
 RECOVERED=$(echo "$RECOVERED_B64" | base64 -d)
 assert_eq "$PLAINTEXT" "$RECOVERED" "signed stream encrypt round-trip"
 
@@ -126,9 +126,9 @@ rm -rf "$EXPORT_GNUPGHOME"
 begin_test "Double finalize fails"
 START_RESP=$($BAO write -force -format=json gpg/encrypt-stream/stream-enc-test/start 2>&1)
 SID=$(echo "$START_RESP" | jq -r '.data.session_id')
-$BAO write -force "gpg/encrypt-stream/session/$SID/finalize" >/dev/null 2>&1
+$BAO write -force "gpg/encrypt-stream/stream-enc-test/finalize" session_id="$SID" >/dev/null 2>&1
 assert_cmd_fails "double finalize rejected" \
-    $BAO write -force "gpg/encrypt-stream/session/$SID/finalize"
+    $BAO write -force "gpg/encrypt-stream/stream-enc-test/finalize" session_id="$SID"
 
 # --- Error: non-existent key ---
 begin_test "Non-existent key fails"

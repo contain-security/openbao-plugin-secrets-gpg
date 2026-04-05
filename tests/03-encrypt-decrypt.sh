@@ -35,15 +35,15 @@ assert_eq "$PLAINTEXT" "$RECOVERED" "decrypt matches original (ascii-armor)"
 
 # --- Encrypt + sign, decrypt + verify ---
 begin_test "Encrypt+sign → decrypt+verify"
-CIPHERTEXT=$($BAO write -field=ciphertext gpg/encrypt/enc-test plaintext="$PLAINTEXT_B64" format=base64 signer_key_name=signer-test 2>&1)
-RECOVERED_B64=$($BAO write -field=plaintext gpg/decrypt/enc-test ciphertext="$CIPHERTEXT" format=base64 signer_key_name=signer-test 2>&1)
+CIPHERTEXT=$($BAO write -field=ciphertext gpg/encrypt/enc-test/sign/signer-test plaintext="$PLAINTEXT_B64" format=base64 2>&1)
+RECOVERED_B64=$($BAO write -field=plaintext gpg/decrypt/enc-test/sign/signer-test ciphertext="$CIPHERTEXT" format=base64 2>&1)
 RECOVERED=$(echo "$RECOVERED_B64" | base64 -d)
 assert_eq "$PLAINTEXT" "$RECOVERED" "signed encrypt/decrypt round-trip"
 
 # --- Wrong signer rejected ---
 begin_test "Decrypt with wrong signer fails"
 assert_cmd_fails "wrong signer rejected" \
-    $BAO write gpg/decrypt/enc-test ciphertext="$CIPHERTEXT" format=base64 signer_key_name=enc-test
+    $BAO write gpg/decrypt/enc-test/sign/enc-test ciphertext="$CIPHERTEXT" format=base64
 
 # --- Decrypt with wrong key fails ---
 begin_test "Decrypt with wrong key fails"

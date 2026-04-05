@@ -2,6 +2,7 @@ package gpg
 
 import (
 	"context"
+	"crypto"
 	"encoding/base64"
 	"fmt"
 	"io"
@@ -21,9 +22,28 @@ func pathEncryptStreamStart(b *backend) *framework.Path {
 				Type:        framework.TypeString,
 				Description: "The key to encrypt to",
 			},
-			"signer_key_name": {
+		},
+		Operations: map[logical.Operation]framework.OperationHandler{
+			logical.UpdateOperation: &framework.PathOperation{
+				Callback: b.pathEncryptStreamStartWrite,
+			},
+		},
+		HelpSynopsis:    pathEncryptStreamStartHelpSyn,
+		HelpDescription: pathEncryptStreamStartHelpDesc,
+	}
+}
+
+func pathEncryptStreamStartWithSigner(b *backend) *framework.Path {
+	return &framework.Path{
+		Pattern: "encrypt-stream/" + framework.GenericNameRegex("name") + "/sign/" + framework.GenericNameRegex("signer_name") + "/start",
+		Fields: map[string]*framework.FieldSchema{
+			"name": {
 				Type:        framework.TypeString,
-				Description: "Name of another GPG key stored in OpenBao to sign the message with.",
+				Description: "The key to encrypt to",
+			},
+			"signer_name": {
+				Type:        framework.TypeString,
+				Description: "The GPG key to sign the message with (from URL path)",
 			},
 		},
 		Operations: map[logical.Operation]framework.OperationHandler{
@@ -38,8 +58,12 @@ func pathEncryptStreamStart(b *backend) *framework.Path {
 
 func pathEncryptStreamUpdate(b *backend) *framework.Path {
 	return &framework.Path{
-		Pattern: "encrypt-stream/session/" + framework.GenericNameRegex("session_id") + "/update",
+		Pattern: "encrypt-stream/" + framework.GenericNameRegex("name") + "/update",
 		Fields: map[string]*framework.FieldSchema{
+			"name": {
+				Type:        framework.TypeString,
+				Description: "The key to encrypt to",
+			},
 			"session_id": {
 				Type:        framework.TypeString,
 				Description: "Session ID returned from the start endpoint",
@@ -61,8 +85,12 @@ func pathEncryptStreamUpdate(b *backend) *framework.Path {
 
 func pathEncryptStreamFinalize(b *backend) *framework.Path {
 	return &framework.Path{
-		Pattern: "encrypt-stream/session/" + framework.GenericNameRegex("session_id") + "/finalize",
+		Pattern: "encrypt-stream/" + framework.GenericNameRegex("name") + "/finalize",
 		Fields: map[string]*framework.FieldSchema{
+			"name": {
+				Type:        framework.TypeString,
+				Description: "The key to encrypt to",
+			},
 			"session_id": {
 				Type:        framework.TypeString,
 				Description: "Session ID returned from the start endpoint",
@@ -92,7 +120,7 @@ func (b *backend) pathEncryptStreamStartWrite(ctx context.Context, req *logical.
 	}
 
 	var signerEntity *openpgp.Entity
-	signerKeyName := data.Get("signer_key_name").(string)
+	signerKeyName := resolveSignerKeyName(data)
 	if signerKeyName != "" {
 		signerEntry, err := b.key(ctx, req.Storage, signerKeyName)
 		if err != nil {
@@ -100,6 +128,9 @@ func (b *backend) pathEncryptStreamStartWrite(ctx context.Context, req *logical.
 		}
 		if signerEntry == nil {
 			return logical.ErrorResponse("signer key not found"), logical.ErrInvalidRequest
+		}
+		if !signerEntry.HasPrivateKey {
+			return logical.ErrorResponse("signing requires a key with private key material"), logical.ErrInvalidRequest
 		}
 		signerEntity, err = b.entity(signerEntry)
 		if err != nil {
@@ -127,6 +158,7 @@ func (b *backend) pathEncryptStreamStartWrite(ctx context.Context, req *logical.
 	// the plainWriter for streaming plaintext.
 	plainWriter, err := openpgp.Encrypt(lw, []*openpgp.Entity{recipientEntity}, signerEntity, nil, &packet.Config{
 		DefaultCipher: packet.CipherAES256,
+		DefaultHash:   crypto.SHA256,
 	})
 	if err != nil {
 		return nil, err
@@ -154,7 +186,7 @@ func (b *backend) pathEncryptStreamStartWrite(ctx context.Context, req *logical.
 	if err := b.streamSessions.create(sess); err != nil {
 		// Clean up
 		plainWriter.Close()
-		return logical.ErrorResponse(err.Error()), nil
+		return logical.ErrorResponse("unable to create streaming session"), nil
 	}
 
 	// Drain the initial output (PKESK header)
@@ -190,8 +222,11 @@ func (b *backend) pathEncryptStreamUpdateWrite(ctx context.Context, req *logical
 	if sess.sessionType != sessionTypeEncrypt {
 		return logical.ErrorResponse("session is not an encrypt session"), logical.ErrInvalidRequest
 	}
-	if sess.clientTokenHash != hashClientToken(req.ClientToken) {
+	if !clientTokenMatches(sess.clientTokenHash, req.ClientToken) {
 		return logical.ErrorResponse("session belongs to a different client"), logical.ErrInvalidRequest
+	}
+	if sess.keyName != data.Get("name").(string) {
+		return logical.ErrorResponse("key name does not match session"), logical.ErrInvalidRequest
 	}
 
 	inputB64 := data.Get("data").(string)
@@ -245,8 +280,11 @@ func (b *backend) pathEncryptStreamFinalizeWrite(ctx context.Context, req *logic
 	if sess.sessionType != sessionTypeEncrypt {
 		return logical.ErrorResponse("session is not an encrypt session"), logical.ErrInvalidRequest
 	}
-	if sess.clientTokenHash != hashClientToken(req.ClientToken) {
+	if !clientTokenMatches(sess.clientTokenHash, req.ClientToken) {
 		return logical.ErrorResponse("session belongs to a different client"), logical.ErrInvalidRequest
+	}
+	if sess.keyName != data.Get("name").(string) {
+		return logical.ErrorResponse("key name does not match session"), logical.ErrInvalidRequest
 	}
 
 	// Close the plainWriter — triggers MDC computation and final encrypted bytes

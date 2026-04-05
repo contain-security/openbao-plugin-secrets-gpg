@@ -65,10 +65,11 @@ func TestGPG_EncryptStreamRoundTrip(t *testing.T) {
 		chunk := plaintext[i:end]
 		req = &logical.Request{
 			Storage: storage, Operation: logical.UpdateOperation,
-			Path:        "encrypt-stream/session/" + sessionID + "/update",
+			Path:        "encrypt-stream/test/update",
 			ClientToken: "test-token",
 			Data: map[string]interface{}{
-				"data": base64.StdEncoding.EncodeToString(chunk),
+				"session_id": sessionID,
+				"data":       base64.StdEncoding.EncodeToString(chunk),
 			},
 		}
 		resp, err = b.HandleRequest(context.Background(), req)
@@ -88,9 +89,9 @@ func TestGPG_EncryptStreamRoundTrip(t *testing.T) {
 	// Finalize
 	req = &logical.Request{
 		Storage: storage, Operation: logical.UpdateOperation,
-		Path:        "encrypt-stream/session/" + sessionID + "/finalize",
+		Path:        "encrypt-stream/test/finalize",
 		ClientToken: "test-token",
-		Data:        map[string]interface{}{},
+		Data:        map[string]interface{}{"session_id": sessionID},
 	}
 	resp, err = b.HandleRequest(context.Background(), req)
 	if err != nil {
@@ -175,8 +176,8 @@ func TestGPG_EncryptStreamDecryptWithGoCrypto(t *testing.T) {
 
 	req = &logical.Request{
 		Storage: storage, Operation: logical.UpdateOperation,
-		Path: "encrypt-stream/session/" + sessionID + "/update", ClientToken: "test-token",
-		Data: map[string]interface{}{"data": base64.StdEncoding.EncodeToString(plaintext)},
+		Path: "encrypt-stream/test/update", ClientToken: "test-token",
+		Data: map[string]interface{}{"session_id": sessionID, "data": base64.StdEncoding.EncodeToString(plaintext)},
 	}
 	resp, _ = b.HandleRequest(context.Background(), req)
 	encData, _ := base64.StdEncoding.DecodeString(resp.Data["data"].(string))
@@ -184,8 +185,8 @@ func TestGPG_EncryptStreamDecryptWithGoCrypto(t *testing.T) {
 
 	req = &logical.Request{
 		Storage: storage, Operation: logical.UpdateOperation,
-		Path: "encrypt-stream/session/" + sessionID + "/finalize", ClientToken: "test-token",
-		Data: map[string]interface{}{},
+		Path: "encrypt-stream/test/finalize", ClientToken: "test-token",
+		Data: map[string]interface{}{"session_id": sessionID},
 	}
 	resp, _ = b.HandleRequest(context.Background(), req)
 	finalData, _ := base64.StdEncoding.DecodeString(resp.Data["data"].(string))
@@ -248,11 +249,11 @@ func TestGPG_EncryptStreamWithSigner(t *testing.T) {
 
 	plaintext := []byte("Signed and encrypted data")
 
-	// Start with signer
+	// Start with signer via URL path
 	req = &logical.Request{
 		Storage: storage, Operation: logical.UpdateOperation,
-		Path: "encrypt-stream/recipient/start", ClientToken: "test-token",
-		Data: map[string]interface{}{"signer_key_name": "signer"},
+		Path: "encrypt-stream/recipient/sign/signer/start", ClientToken: "test-token",
+		Data: map[string]interface{}{},
 	}
 	resp, err := b.HandleRequest(context.Background(), req)
 	if err != nil {
@@ -266,8 +267,8 @@ func TestGPG_EncryptStreamWithSigner(t *testing.T) {
 
 	req = &logical.Request{
 		Storage: storage, Operation: logical.UpdateOperation,
-		Path: "encrypt-stream/session/" + sessionID + "/update", ClientToken: "test-token",
-		Data: map[string]interface{}{"data": base64.StdEncoding.EncodeToString(plaintext)},
+		Path: "encrypt-stream/recipient/update", ClientToken: "test-token",
+		Data: map[string]interface{}{"session_id": sessionID, "data": base64.StdEncoding.EncodeToString(plaintext)},
 	}
 	resp, _ = b.HandleRequest(context.Background(), req)
 	encData, _ := base64.StdEncoding.DecodeString(resp.Data["data"].(string))
@@ -275,8 +276,8 @@ func TestGPG_EncryptStreamWithSigner(t *testing.T) {
 
 	req = &logical.Request{
 		Storage: storage, Operation: logical.UpdateOperation,
-		Path: "encrypt-stream/session/" + sessionID + "/finalize", ClientToken: "test-token",
-		Data: map[string]interface{}{},
+		Path: "encrypt-stream/recipient/finalize", ClientToken: "test-token",
+		Data: map[string]interface{}{"session_id": sessionID},
 	}
 	resp, _ = b.HandleRequest(context.Background(), req)
 	finalData, _ := base64.StdEncoding.DecodeString(resp.Data["data"].(string))
@@ -287,14 +288,13 @@ func TestGPG_EncryptStreamWithSigner(t *testing.T) {
 		ciphertext.Write(part)
 	}
 
-	// Decrypt with signer verification via the plugin endpoint
+	// Decrypt with signer verification via URL path
 	req = &logical.Request{
 		Storage: storage, Operation: logical.UpdateOperation,
-		Path: "decrypt/recipient", ClientToken: "test-token",
+		Path: "decrypt/recipient/sign/signer", ClientToken: "test-token",
 		Data: map[string]interface{}{
-			"ciphertext":      base64.StdEncoding.EncodeToString(ciphertext.Bytes()),
-			"format":          "base64",
-			"signer_key_name": "signer",
+			"ciphertext": base64.StdEncoding.EncodeToString(ciphertext.Bytes()),
+			"format":     "base64",
 		},
 	}
 	resp, err = b.HandleRequest(context.Background(), req)
@@ -339,8 +339,8 @@ func TestGPG_EncryptStreamErrors(t *testing.T) {
 	// Non-existent session update
 	req = &logical.Request{
 		Storage: storage, Operation: logical.UpdateOperation,
-		Path: "encrypt-stream/session/fakeid/update", ClientToken: "test-token",
-		Data: map[string]interface{}{"data": base64.StdEncoding.EncodeToString([]byte("data"))},
+		Path: "encrypt-stream/test/update", ClientToken: "test-token",
+		Data: map[string]interface{}{"session_id": "fakeid", "data": base64.StdEncoding.EncodeToString([]byte("data"))},
 	}
 	resp, err = b.HandleRequest(context.Background(), req)
 	if err == nil || !resp.IsError() {
@@ -358,8 +358,8 @@ func TestGPG_EncryptStreamErrors(t *testing.T) {
 
 	req = &logical.Request{
 		Storage: storage, Operation: logical.UpdateOperation,
-		Path: "encrypt-stream/session/" + sessionID + "/update", ClientToken: "token-b",
-		Data: map[string]interface{}{"data": base64.StdEncoding.EncodeToString([]byte("data"))},
+		Path: "encrypt-stream/test/update", ClientToken: "token-b",
+		Data: map[string]interface{}{"session_id": sessionID, "data": base64.StdEncoding.EncodeToString([]byte("data"))},
 	}
 	resp, err = b.HandleRequest(context.Background(), req)
 	if err == nil || !resp.IsError() {
@@ -369,8 +369,8 @@ func TestGPG_EncryptStreamErrors(t *testing.T) {
 	// Double finalize
 	req = &logical.Request{
 		Storage: storage, Operation: logical.UpdateOperation,
-		Path: "encrypt-stream/session/" + sessionID + "/finalize", ClientToken: "token-a",
-		Data: map[string]interface{}{},
+		Path: "encrypt-stream/test/finalize", ClientToken: "token-a",
+		Data: map[string]interface{}{"session_id": sessionID},
 	}
 	resp, err = b.HandleRequest(context.Background(), req)
 	if err != nil {

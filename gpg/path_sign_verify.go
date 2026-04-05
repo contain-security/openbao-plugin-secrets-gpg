@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/ProtonMail/go-crypto/openpgp"
-	"github.com/ProtonMail/go-crypto/openpgp/armor"
 	"github.com/ProtonMail/go-crypto/openpgp/packet"
 	"github.com/openbao/openbao/sdk/v2/framework"
 	"github.com/openbao/openbao/sdk/v2/logical"
@@ -114,7 +113,7 @@ func (b *backend) pathSignWrite(ctx context.Context, req *logical.Request, data 
 	case "sha2-512":
 		config.DefaultHash = crypto.SHA512
 	default:
-		return logical.ErrorResponse(fmt.Sprintf("unsupported algorithm %s", algorithm)), nil
+		return logical.ErrorResponse("unsupported algorithm; must be \"sha2-224\", \"sha2-256\", \"sha2-384\", or \"sha2-512\""), nil
 	}
 
 	format := data.Get("format").(string)
@@ -122,7 +121,7 @@ func (b *backend) pathSignWrite(ctx context.Context, req *logical.Request, data 
 	case "base64":
 	case "ascii-armor":
 	default:
-		return logical.ErrorResponse(fmt.Sprintf("unsupported encoding format %s; must be \"base64\" or \"ascii-armor\"", format)), nil
+		return logical.ErrorResponse("unsupported encoding format; must be \"base64\" or \"ascii-armor\""), nil
 	}
 
 	entry, err := b.key(ctx, req.Storage, data.Get("name").(string))
@@ -132,6 +131,9 @@ func (b *backend) pathSignWrite(ctx context.Context, req *logical.Request, data 
 	if entry == nil {
 		return logical.ErrorResponse("key not found"), logical.ErrInvalidRequest
 	}
+	if !entry.HasPrivateKey {
+		return logical.ErrorResponse("signing requires a key with private key material"), logical.ErrInvalidRequest
+	}
 	entity, err := b.entity(entry)
 	if err != nil {
 		return nil, err
@@ -139,34 +141,24 @@ func (b *backend) pathSignWrite(ctx context.Context, req *logical.Request, data 
 
 	message := bytes.NewReader(input)
 
-	var armoredSignatureBuffer bytes.Buffer
-	err = openpgp.ArmoredDetachSign(&armoredSignatureBuffer, entity, message, &config)
-	if err != nil {
-		return nil, err
-	}
-
 	var outputSignature bytes.Buffer
 	switch format {
 	case "ascii-armor":
-		outputSignature = armoredSignatureBuffer
+		err = openpgp.ArmoredDetachSign(&outputSignature, entity, message, &config)
+		if err != nil {
+			return nil, err
+		}
 	case "base64":
-		block, err := armor.Decode(bytes.NewReader(armoredSignatureBuffer.Bytes()))
+		var rawSig bytes.Buffer
+		err = openpgp.DetachSign(&rawSig, entity, message, &config)
 		if err != nil {
 			return nil, err
 		}
-
 		encoder := base64.NewEncoder(base64.StdEncoding, &outputSignature)
-		bufBody := &bytes.Buffer{}
-		_, err = bufBody.ReadFrom(block.Body)
-		if err != nil {
+		if _, err = encoder.Write(rawSig.Bytes()); err != nil {
 			return nil, err
 		}
-		_, err = encoder.Write(bufBody.Bytes())
-		if err != nil {
-			return nil, err
-		}
-		err = encoder.Close()
-		if err != nil {
+		if err = encoder.Close(); err != nil {
 			return nil, err
 		}
 	}
@@ -190,7 +182,7 @@ func (b *backend) pathVerifyWrite(ctx context.Context, req *logical.Request, dat
 	case "base64":
 	case "ascii-armor":
 	default:
-		return logical.ErrorResponse(fmt.Sprintf("unsupported encoding format %s; must be \"base64\" or \"ascii-armor\"", format)), nil
+		return logical.ErrorResponse("unsupported encoding format; must be \"base64\" or \"ascii-armor\""), nil
 	}
 
 	keyEntry, err := b.key(ctx, req.Storage, data.Get("name").(string))

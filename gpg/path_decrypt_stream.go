@@ -22,9 +22,32 @@ func pathDecryptStreamStart(b *backend) *framework.Path {
 				Type:        framework.TypeString,
 				Description: "The key to decrypt with",
 			},
-			"signer_key_name": {
+			"data": {
 				Type:        framework.TypeString,
-				Description: "Name of a GPG key stored in OpenBao to verify the signature.",
+				Description: "Base64-encoded initial ciphertext (must contain the PGP PKESK header).",
+			},
+		},
+		Operations: map[logical.Operation]framework.OperationHandler{
+			logical.UpdateOperation: &framework.PathOperation{
+				Callback: b.pathDecryptStreamStartWrite,
+			},
+		},
+		HelpSynopsis:    pathDecryptStreamStartHelpSyn,
+		HelpDescription: pathDecryptStreamStartHelpDesc,
+	}
+}
+
+func pathDecryptStreamStartWithSigner(b *backend) *framework.Path {
+	return &framework.Path{
+		Pattern: "decrypt-stream/" + framework.GenericNameRegex("name") + "/sign/" + framework.GenericNameRegex("signer_name") + "/start",
+		Fields: map[string]*framework.FieldSchema{
+			"name": {
+				Type:        framework.TypeString,
+				Description: "The key to decrypt with",
+			},
+			"signer_name": {
+				Type:        framework.TypeString,
+				Description: "The GPG key to verify the signature against (from URL path)",
 			},
 			"data": {
 				Type:        framework.TypeString,
@@ -43,8 +66,12 @@ func pathDecryptStreamStart(b *backend) *framework.Path {
 
 func pathDecryptStreamUpdate(b *backend) *framework.Path {
 	return &framework.Path{
-		Pattern: "decrypt-stream/session/" + framework.GenericNameRegex("session_id") + "/update",
+		Pattern: "decrypt-stream/" + framework.GenericNameRegex("name") + "/update",
 		Fields: map[string]*framework.FieldSchema{
+			"name": {
+				Type:        framework.TypeString,
+				Description: "The key to decrypt with",
+			},
 			"session_id": {
 				Type:        framework.TypeString,
 				Description: "Session ID returned from the start endpoint",
@@ -66,8 +93,12 @@ func pathDecryptStreamUpdate(b *backend) *framework.Path {
 
 func pathDecryptStreamFinalize(b *backend) *framework.Path {
 	return &framework.Path{
-		Pattern: "decrypt-stream/session/" + framework.GenericNameRegex("session_id") + "/finalize",
+		Pattern: "decrypt-stream/" + framework.GenericNameRegex("name") + "/finalize",
 		Fields: map[string]*framework.FieldSchema{
+			"name": {
+				Type:        framework.TypeString,
+				Description: "The key to decrypt with",
+			},
 			"session_id": {
 				Type:        framework.TypeString,
 				Description: "Session ID returned from the start endpoint",
@@ -81,6 +112,30 @@ func pathDecryptStreamFinalize(b *backend) *framework.Path {
 		HelpSynopsis:    pathDecryptStreamFinalizeHelpSyn,
 		HelpDescription: pathDecryptStreamFinalizeHelpDesc,
 	}
+}
+
+// limitedWriter wraps an io.Writer and stops accepting data once a byte cap
+// is exceeded. Unlike io.LimitReader, this prevents any over-limit data from
+// reaching the underlying writer.
+type limitedWriter struct {
+	w         io.Writer
+	remaining int64
+	exceeded  bool
+}
+
+var errPlaintextTooLarge = fmt.Errorf("decrypted plaintext exceeds maximum size")
+
+func (lw *limitedWriter) Write(p []byte) (int, error) {
+	if lw.exceeded {
+		return 0, errPlaintextTooLarge
+	}
+	if int64(len(p)) > lw.remaining {
+		lw.exceeded = true
+		return 0, errPlaintextTooLarge
+	}
+	n, err := lw.w.Write(p)
+	lw.remaining -= int64(n)
+	return n, err
 }
 
 // bufferedPipeWriter is a non-blocking writer that buffers data and feeds it
@@ -176,6 +231,9 @@ func (b *backend) pathDecryptStreamStartWrite(ctx context.Context, req *logical.
 	if keyEntry == nil {
 		return logical.ErrorResponse("key not found"), logical.ErrInvalidRequest
 	}
+	if !keyEntry.HasPrivateKey {
+		return logical.ErrorResponse("decryption requires a key with private key material"), logical.ErrInvalidRequest
+	}
 
 	r := bytes.NewReader(keyEntry.SerializedKey)
 	keyring, err := openpgp.ReadKeyRing(r)
@@ -183,7 +241,7 @@ func (b *backend) pathDecryptStreamStartWrite(ctx context.Context, req *logical.
 		return nil, err
 	}
 
-	signerKeyName := data.Get("signer_key_name").(string)
+	signerKeyName := resolveSignerKeyName(data)
 	hasSigner := signerKeyName != ""
 	if hasSigner {
 		signerEntry, err := b.key(ctx, req.Storage, signerKeyName)
@@ -246,7 +304,7 @@ func (b *backend) pathDecryptStreamStartWrite(ctx context.Context, req *logical.
 	if err := b.streamSessions.create(sess); err != nil {
 		bpw.Close()
 		inputPipeR.Close()
-		return logical.ErrorResponse(err.Error()), nil
+		return logical.ErrorResponse("unable to create streaming session"), nil
 	}
 
 	// Write initial ciphertext to the buffered pipe.
@@ -275,7 +333,7 @@ func (b *backend) pathDecryptStreamStartWrite(ctx context.Context, req *logical.
 		md, err := openpgp.ReadMessage(inputPipeR, keyring, nil, nil)
 		if err != nil {
 			decState.outputMu.Lock()
-			decState.goroutineErr = fmt.Errorf("ReadMessage error: %w", err)
+			decState.goroutineErr = fmt.Errorf("decryption failed")
 			decState.outputMu.Unlock()
 			readyOnce.Do(func() { close(readySignal) })
 			return
@@ -283,10 +341,20 @@ func (b *backend) pathDecryptStreamStartWrite(ctx context.Context, req *logical.
 
 		readyOnce.Do(func() { close(readySignal) })
 
-		// Copy decrypted body to the output buffer
-		if _, err := io.Copy(lw, md.UnverifiedBody); err != nil {
+		// Copy decrypted body to the output buffer with size limit.
+		// The limitedWriter wraps lw and refuses writes once the cap is hit,
+		// so no data beyond the limit is buffered or returned to the client.
+		limited := &limitedWriter{w: lw, remaining: defaultMaxPlaintextSize}
+		_, err = io.Copy(limited, md.UnverifiedBody)
+		if limited.exceeded {
 			decState.outputMu.Lock()
-			decState.goroutineErr = fmt.Errorf("decryption error: %w", err)
+			decState.goroutineErr = fmt.Errorf("decrypted plaintext exceeds maximum size")
+			decState.outputMu.Unlock()
+			return
+		}
+		if err != nil {
+			decState.outputMu.Lock()
+			decState.goroutineErr = fmt.Errorf("decryption failed")
 			decState.outputMu.Unlock()
 			return
 		}
@@ -295,7 +363,7 @@ func (b *backend) pathDecryptStreamStartWrite(ctx context.Context, req *logical.
 		if hasSigner {
 			if !md.IsSigned || md.SignedBy == nil || md.SignatureError != nil {
 				decState.outputMu.Lock()
-				decState.sigError = fmt.Errorf("signature is invalid or not present: %v", md.SignatureError)
+				decState.sigError = fmt.Errorf("signature verification failed")
 				decState.outputMu.Unlock()
 			}
 		}
@@ -326,14 +394,17 @@ func (b *backend) pathDecryptStreamStartWrite(ctx context.Context, req *logical.
 	decState.outputBuf.Reset()
 	decState.outputMu.Unlock()
 
-	return &logical.Response{
-		Data: map[string]interface{}{
-			"session_id": sessionID,
-			"data":       base64.StdEncoding.EncodeToString(initialPlaintext),
-			"sequence":   int64(0),
-			"done":       false,
-		},
-	}, nil
+	respData := map[string]interface{}{
+		"session_id": sessionID,
+		"data":       base64.StdEncoding.EncodeToString(initialPlaintext),
+		"sequence":   int64(0),
+		"done":       false,
+	}
+	if hasSigner {
+		respData["signature_verified"] = false
+	}
+
+	return &logical.Response{Data: respData}, nil
 }
 
 func (b *backend) pathDecryptStreamUpdateWrite(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
@@ -352,8 +423,11 @@ func (b *backend) pathDecryptStreamUpdateWrite(ctx context.Context, req *logical
 	if sess.sessionType != sessionTypeDecrypt {
 		return logical.ErrorResponse("session is not a decrypt session"), logical.ErrInvalidRequest
 	}
-	if sess.clientTokenHash != hashClientToken(req.ClientToken) {
+	if !clientTokenMatches(sess.clientTokenHash, req.ClientToken) {
 		return logical.ErrorResponse("session belongs to a different client"), logical.ErrInvalidRequest
+	}
+	if sess.keyName != data.Get("name").(string) {
+		return logical.ErrorResponse("key name does not match session"), logical.ErrInvalidRequest
 	}
 
 	// Check for goroutine errors
@@ -376,7 +450,7 @@ func (b *backend) pathDecryptStreamUpdateWrite(ctx context.Context, req *logical
 
 	// Write ciphertext to the buffered pipe (non-blocking).
 	if _, err := sess.decrypt.bpw.Write(input); err != nil {
-		return nil, fmt.Errorf("error writing ciphertext: %w", err)
+		return nil, fmt.Errorf("decryption failed")
 	}
 
 	// Drain available decrypted plaintext. The goroutine may not have
@@ -391,14 +465,17 @@ func (b *backend) pathDecryptStreamUpdateWrite(ctx context.Context, req *logical
 	sess.sequence++
 	sess.lastAccess = time.Now()
 
-	return &logical.Response{
-		Data: map[string]interface{}{
-			"session_id": sessionID,
-			"data":       base64.StdEncoding.EncodeToString(plaintext),
-			"sequence":   sess.sequence,
-			"done":       false,
-		},
-	}, nil
+	respData := map[string]interface{}{
+		"session_id": sessionID,
+		"data":       base64.StdEncoding.EncodeToString(plaintext),
+		"sequence":   sess.sequence,
+		"done":       false,
+	}
+	if sess.decrypt.hasSigner {
+		respData["signature_verified"] = false
+	}
+
+	return &logical.Response{Data: respData}, nil
 }
 
 func (b *backend) pathDecryptStreamFinalizeWrite(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
@@ -417,8 +494,11 @@ func (b *backend) pathDecryptStreamFinalizeWrite(ctx context.Context, req *logic
 	if sess.sessionType != sessionTypeDecrypt {
 		return logical.ErrorResponse("session is not a decrypt session"), logical.ErrInvalidRequest
 	}
-	if sess.clientTokenHash != hashClientToken(req.ClientToken) {
+	if !clientTokenMatches(sess.clientTokenHash, req.ClientToken) {
 		return logical.ErrorResponse("session belongs to a different client"), logical.ErrInvalidRequest
+	}
+	if sess.keyName != data.Get("name").(string) {
+		return logical.ErrorResponse("key name does not match session"), logical.ErrInvalidRequest
 	}
 
 	// Close the buffered pipe writer — signals EOF to the goroutine
@@ -454,9 +534,6 @@ func (b *backend) pathDecryptStreamFinalizeWrite(ctx context.Context, req *logic
 
 	if sess.decrypt.hasSigner {
 		respData["signature_valid"] = sigError == nil
-		if sigError != nil {
-			respData["signature_error"] = sigError.Error()
-		}
 	}
 
 	b.streamSessions.remove(sessionID)
@@ -471,14 +548,26 @@ const pathDecryptStreamStartHelpDesc = `
 Starts a streaming decryption session for the named GPG key. The initial
 ciphertext data must contain at least the PGP PKESK header. Returns a
 session_id and any initial decrypted plaintext.
+
+IMPORTANT: When a signer key is specified, plaintext returned by start and
+update responses is UNVERIFIED. The PGP signature is appended after the
+message body, so it cannot be checked until all data is read. The client
+MUST wait for the finalize response and check signature_valid before
+trusting or processing any of the received plaintext. Start and update
+responses include "signature_verified": false as a reminder.
 `
 const pathDecryptStreamUpdateHelpSyn = "Feed a ciphertext chunk to a streaming decrypt session"
 const pathDecryptStreamUpdateHelpDesc = `
 Sends a base64-encoded ciphertext chunk to an active decryption session.
 Returns any decrypted plaintext available. Chunks must be sent sequentially.
+
+When a signer key is specified, responses include "signature_verified": false.
+Do not act on the plaintext until finalize confirms signature_valid is true.
 `
 const pathDecryptStreamFinalizeHelpSyn = "Finalize a streaming decrypt session"
 const pathDecryptStreamFinalizeHelpDesc = `
 Finalizes the streaming decryption session. Returns any remaining decrypted
-plaintext and, if a signer was specified, the signature verification result.
+plaintext and, if a signer was specified, the signature verification result
+(signature_valid field). Only after this response confirms
+signature_valid: true should the client trust the decrypted data.
 `
