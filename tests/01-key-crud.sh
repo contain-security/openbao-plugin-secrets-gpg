@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # Test: Key CRUD operations
 source "$(dirname "$0")/common.sh"
-check_server
-check_plugin
+check_prerequisites
 
 echo "============================================="
 echo "  01 - Key CRUD Operations"

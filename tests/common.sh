@@ -6,12 +6,22 @@ set -euo pipefail
 TESTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$TESTS_DIR/.." && pwd)"
 
-export BAO_ADDR=${BAO_ADDR:-http://192.168.1.101:8200}
+export BAO_ADDR=${BAO_ADDR:-http://127.0.0.1:8200}
 export BAO_TOKEN=${BAO_TOKEN:-root}
-BAO=${BAO_BIN:-"$ROOT_DIR/openbao/bin/bao"}
+
+# Locate bao binary: BAO_BIN env > PATH > known local build location
+if [ -n "${BAO_BIN:-}" ]; then
+    BAO="$BAO_BIN"
+elif command -v bao >/dev/null 2>&1; then
+    BAO="$(command -v bao)"
+else
+    echo "ERROR: bao binary not found."
+    echo "  Set BAO_BIN=/path/to/bao or add bao to PATH."
+    exit 1
+fi
 
 TMPDIR=$(mktemp -d)
-trap "rm -rf $TMPDIR" EXIT
+trap 'rm -rf "$TMPDIR"' EXIT
 
 # Counters
 _PASS=0
@@ -100,22 +110,42 @@ print_summary() {
     [ $_FAIL -eq 0 ] && exit 0 || exit 1
 }
 
-# Ensure server is reachable
+# --- Prerequisite checks ---
+# Call these at the top of each test script (or via check_prerequisites).
+
 check_server() {
     if ! curl -sf "$BAO_ADDR/v1/sys/health" >/dev/null 2>&1; then
         echo "ERROR: OpenBao server not reachable at $BAO_ADDR"
-        echo "Start it with: cd test-bed/openbao-instance && ../../openbao/bin/bao server -dev -dev-root-token-id=root -dev-listen-address=192.168.1.101:8200 -dev-plugin-dir=./plugins"
+        echo "  Start it with: bash test-bed/start-dev.sh"
         exit 1
     fi
 }
 
-# Ensure the gpg plugin is mounted
 check_plugin() {
-    if ! $BAO secrets list 2>/dev/null | grep -q "^gpg/"; then
+    if ! "$BAO" secrets list 2>/dev/null | grep -q "^gpg/"; then
         echo "ERROR: GPG plugin not mounted at gpg/"
-        echo "Mount it with: bao secrets enable -path=gpg -plugin-name=openbao-plugin-secrets-gpg plugin"
+        echo "  Start the dev server with: bash test-bed/start-dev.sh"
         exit 1
     fi
+}
+
+check_tools() {
+    local missing=()
+    command -v jq >/dev/null 2>&1 || missing+=("jq")
+    command -v gpg >/dev/null 2>&1 || missing+=("gpg")
+    command -v curl >/dev/null 2>&1 || missing+=("curl")
+    command -v base64 >/dev/null 2>&1 || missing+=("base64")
+    if [ ${#missing[@]} -gt 0 ]; then
+        echo "ERROR: Required tools not found: ${missing[*]}"
+        exit 1
+    fi
+}
+
+# Run all prerequisite checks at once
+check_prerequisites() {
+    check_tools
+    check_server
+    check_plugin
 }
 
 # Create a key if it doesn't already exist

@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # Test: Sign and Verify operations (non-streaming)
 source "$(dirname "$0")/common.sh"
-check_server
-check_plugin
+check_prerequisites
 
 echo "============================================="
 echo "  02 - Sign & Verify (Non-Streaming)"
