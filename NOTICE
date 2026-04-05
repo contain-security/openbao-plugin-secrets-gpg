@@ -1,0 +1,10 @@
+openbao-plugin-secrets-gpg
+Copyright (c) 2026 OpenBao GPG Plugin Contributors
+
+This project is a port of vault-gpg-plugin
+(https://github.com/LeSuisse/vault-gpg-plugin)
+Copyright (c) 2017-2019 Thomas Gerbet
+Licensed under the MIT License.
+
+The port adapts the original plugin for the OpenBao secrets management platform.
+See CHANGES-FROM-UPSTREAM.md for a summary of modifications.

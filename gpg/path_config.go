@@ -1,3 +1,7 @@
+// Copyright (c) 2017-2019 Thomas Gerbet
+// Copyright (c) 2026 OpenBao GPG Plugin Contributors
+// SPDX-License-Identifier: MIT
+
 package gpg
 
 import (
