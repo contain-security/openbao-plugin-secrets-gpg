@@ -209,7 +209,7 @@ func (b *backend) pathKeyCreate(ctx context.Context, req *logical.Request, data 
 
 	resp, err := b.pathKeyRead(ctx, req, data)
 	if err != nil {
-		return logical.ErrorResponse(err.Error()), nil
+		return nil, err
 	}
 	if resp != nil {
 		return logical.ErrorResponse("key already exists"), nil
