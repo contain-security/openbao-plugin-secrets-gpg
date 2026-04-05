@@ -22,7 +22,8 @@ const (
 	defaultMaxSessions          = 64
 	defaultMaxSessionsPerClient = 4
 	defaultMaxChunkSize         = 4 * 1024 * 1024  // 4MB decoded
-	defaultMaxPlaintextSize  = 32 * 1024 * 1024 // 32MB — limit on decrypted plaintext to prevent decompression bombs
+	defaultMaxPlaintextSize  = 32 * 1024 * 1024  // 32MB — limit on decrypted plaintext to prevent decompression bombs
+	defaultMaxStreamBytes    = 512 * 1024 * 1024 // 512MB — total bytes per streaming session
 	sessionCleanupInterval   = 30 * time.Second
 )
 
@@ -76,6 +77,7 @@ type encryptSessionState struct {
 	outputBuf     bytes.Buffer
 	goroutineDone chan struct{}
 	goroutineErr  error
+	totalBytesIn  int64
 }
 
 // decryptSessionState holds the goroutine-bridged state for streaming decrypt.
