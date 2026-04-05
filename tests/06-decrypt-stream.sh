@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # Test: Streaming decrypt operations
 source "$(dirname "$0")/common.sh"
-check_server
-check_plugin
+check_prerequisites
 
 echo "============================================="
 echo "  06 - Streaming Decrypt"

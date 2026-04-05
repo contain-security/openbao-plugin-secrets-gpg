@@ -1,18 +1,18 @@
-module openbao-plugin-secrets-gpg
+module github.com/contain-security/openbao-plugin-secrets-gpg
 
 go 1.25.0
 
 require (
 	github.com/ProtonMail/go-crypto v1.4.1
 	github.com/hashicorp/go-hclog v1.6.3
-	github.com/openbao/openbao/api/v2 v2.5.0
-	github.com/openbao/openbao/sdk/v2 v2.0.0
+	github.com/openbao/openbao/api/v2 v2.5.1
+	github.com/openbao/openbao/sdk/v2 v2.5.1
 )
 
 require (
 	github.com/armon/go-metrics v0.4.1 // indirect
 	github.com/armon/go-radix v1.0.0 // indirect
-	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
+	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
 	github.com/cloudflare/circl v1.6.2 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/evanphx/json-patch/v5 v5.6.0 // indirect
@@ -45,6 +45,7 @@ require (
 	github.com/mitchellh/mapstructure v1.5.0 // indirect
 	github.com/mitchellh/reflectwalk v1.0.2 // indirect
 	github.com/oklog/run v1.2.0 // indirect
+	github.com/openbao/go-kms-wrapping/entropy/v2 v2.1.0 // indirect
 	github.com/openbao/go-kms-wrapping/v2 v2.7.0 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
@@ -59,9 +60,4 @@ require (
 	google.golang.org/grpc v1.79.3 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
-)
-
-replace (
-	github.com/openbao/openbao/api/v2 => ../openbao/openbao/api
-	github.com/openbao/openbao/sdk/v2 => ../openbao/openbao/sdk
 )

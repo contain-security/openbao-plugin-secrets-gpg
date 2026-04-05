@@ -1,3 +1,7 @@
+// Copyright (c) 2017-2019 Thomas Gerbet
+// Copyright (c) 2026 OpenBao GPG Plugin Contributors
+// SPDX-License-Identifier: MIT
+
 package main
 
 import (
@@ -6,7 +10,7 @@ import (
 	hclog "github.com/hashicorp/go-hclog"
 	"github.com/openbao/openbao/api/v2"
 	"github.com/openbao/openbao/sdk/v2/plugin"
-	gpg "openbao-plugin-secrets-gpg/gpg"
+	gpg "github.com/contain-security/openbao-plugin-secrets-gpg/gpg"
 )
 
 func main() {

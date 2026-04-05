@@ -1,3 +1,6 @@
+// Copyright (c) 2026 OpenBao GPG Plugin Contributors
+// SPDX-License-Identifier: MIT
+
 package gpg
 
 import (
