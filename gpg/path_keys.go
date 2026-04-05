@@ -292,6 +292,10 @@ func (b *backend) pathKeyDelete(ctx context.Context, req *logical.Request, data 
 	if err != nil {
 		return nil, err
 	}
+
+	// Terminate any active streaming sessions that reference this key.
+	b.streamSessions.terminateSessionsByKeyName(name)
+
 	return nil, nil
 }
 

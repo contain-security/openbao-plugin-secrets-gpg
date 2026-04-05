@@ -250,6 +250,26 @@ func (s *sessionStore) terminateSession(sess *streamSession) {
 	}
 }
 
+// terminateSessionsByKeyName terminates and removes all sessions that
+// reference the given key name. Returns the number of sessions terminated.
+func (s *sessionStore) terminateSessionsByKeyName(keyName string) int {
+	removed := 0
+	s.sessions.Range(func(key, value any) bool {
+		sess := value.(*streamSession)
+		if sess.keyName != keyName {
+			return true
+		}
+		s.terminateSession(sess)
+		if _, loaded := s.sessions.LoadAndDelete(key); loaded {
+			s.sessionCount.Add(-1)
+			s.clientCounter(sess.clientTokenHash).Add(-1)
+			removed++
+		}
+		return true
+	})
+	return removed
+}
+
 // killAll terminates all sessions (used on shutdown).
 func (s *sessionStore) killAll() {
 	s.sessions.Range(func(key, value any) bool {

@@ -301,3 +301,149 @@ func TestHashClientToken(t *testing.T) {
 		t.Fatalf("expected 64-char hex hash, got %d", len(h1))
 	}
 }
+
+func TestSessionStore_TerminateByKeyName_Basic(t *testing.T) {
+	store := newSessionStore()
+
+	clientHash := hashClientToken("token")
+	for i, name := range []string{"keyA", "keyA", "keyB"} {
+		id, _ := generateSessionID()
+		store.create(&streamSession{
+			id: id, keyName: name, clientTokenHash: clientHash,
+			lastAccess: time.Now(), sessionType: sessionTypeSign,
+		})
+		_ = i
+	}
+	if store.sessionCount.Load() != 3 {
+		t.Fatalf("expected 3 sessions, got %d", store.sessionCount.Load())
+	}
+
+	removed := store.terminateSessionsByKeyName("keyA")
+	if removed != 2 {
+		t.Fatalf("expected 2 removed, got %d", removed)
+	}
+	if store.sessionCount.Load() != 1 {
+		t.Fatalf("expected 1 remaining, got %d", store.sessionCount.Load())
+	}
+
+	// keyB session still accessible
+	count := 0
+	store.sessions.Range(func(_, v any) bool {
+		if v.(*streamSession).keyName == "keyB" {
+			count++
+		}
+		return true
+	})
+	if count != 1 {
+		t.Fatal("keyB session should still exist")
+	}
+}
+
+func TestSessionStore_TerminateByKeyName_NoMatch(t *testing.T) {
+	store := newSessionStore()
+
+	for i := 0; i < 2; i++ {
+		id, _ := generateSessionID()
+		store.create(&streamSession{
+			id: id, keyName: "keyX", clientTokenHash: hashClientToken("t"),
+			lastAccess: time.Now(), sessionType: sessionTypeSign,
+		})
+	}
+
+	removed := store.terminateSessionsByKeyName("keyY")
+	if removed != 0 {
+		t.Fatalf("expected 0 removed, got %d", removed)
+	}
+	if store.sessionCount.Load() != 2 {
+		t.Fatalf("expected 2 sessions, got %d", store.sessionCount.Load())
+	}
+}
+
+func TestSessionStore_TerminateByKeyName_AlreadyDone(t *testing.T) {
+	store := newSessionStore()
+
+	id, _ := generateSessionID()
+	sess := &streamSession{
+		id: id, keyName: "keyA", clientTokenHash: hashClientToken("t"),
+		lastAccess: time.Now(), sessionType: sessionTypeSign,
+		done: true,
+	}
+	store.create(sess)
+
+	removed := store.terminateSessionsByKeyName("keyA")
+	if removed != 1 {
+		t.Fatalf("expected 1 removed, got %d", removed)
+	}
+	if store.sessionCount.Load() != 0 {
+		t.Fatalf("expected 0 sessions, got %d", store.sessionCount.Load())
+	}
+}
+
+func TestSessionStore_TerminateByKeyName_ClientCounter(t *testing.T) {
+	store := newSessionStore()
+	store.maxSessionsPerClient = 3
+
+	clientHash := hashClientToken("clientA")
+
+	// 2 sessions for keyA, 1 for keyB — all same client
+	for _, name := range []string{"keyA", "keyA", "keyB"} {
+		id, _ := generateSessionID()
+		store.create(&streamSession{
+			id: id, keyName: name, clientTokenHash: clientHash,
+			lastAccess: time.Now(), sessionType: sessionTypeSign,
+		})
+	}
+
+	store.terminateSessionsByKeyName("keyA")
+
+	// Client counter should be 1 (only keyB remains)
+	counter := store.clientCounter(clientHash)
+	if counter.Load() != 1 {
+		t.Fatalf("expected client counter=1, got %d", counter.Load())
+	}
+
+	// Client can create new sessions (not at limit)
+	id, _ := generateSessionID()
+	err := store.create(&streamSession{
+		id: id, keyName: "keyC", clientTokenHash: clientHash,
+		lastAccess: time.Now(), sessionType: sessionTypeSign,
+	})
+	if err != nil {
+		t.Fatalf("should be able to create new session after termination: %v", err)
+	}
+}
+
+func TestSessionStore_TerminateByKeyName_Concurrent(t *testing.T) {
+	store := newSessionStore()
+	store.maxSessionsPerClient = 100
+
+	// 10 sessions for keyA, 10 for keyB — unique client tokens
+	for i := 0; i < 20; i++ {
+		id, _ := generateSessionID()
+		name := "keyA"
+		if i >= 10 {
+			name = "keyB"
+		}
+		store.create(&streamSession{
+			id: id, keyName: name,
+			clientTokenHash: hashClientToken(fmt.Sprintf("token-%d", i)),
+			lastAccess:      time.Now(), sessionType: sessionTypeSign,
+		})
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		store.terminateSessionsByKeyName("keyA")
+	}()
+	go func() {
+		defer wg.Done()
+		store.terminateSessionsByKeyName("keyB")
+	}()
+	wg.Wait()
+
+	if store.sessionCount.Load() != 0 {
+		t.Fatalf("expected 0 sessions, got %d", store.sessionCount.Load())
+	}
+}

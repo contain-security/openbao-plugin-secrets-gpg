@@ -833,3 +833,153 @@ func TestGPG_SignStreamVerifyWithExistingEndpoint_Base64(t *testing.T) {
 		t.Fatalf("go-crypto verification of re-armored base64 signature failed: %v", err)
 	}
 }
+
+func TestGPG_DeleteKeyTerminatesSignStream(t *testing.T) {
+	b := Backend()
+	b.streamSessions = newSessionStore()
+	storage := &logical.InmemStorage{}
+
+	// Create key
+	_, err := b.HandleRequest(context.Background(), &logical.Request{
+		Storage: storage, Operation: logical.UpdateOperation,
+		Path: "keys/testkey", ClientToken: "test-token",
+		Data: map[string]interface{}{"real_name": "Test"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Start sign-stream session
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Storage: storage, Operation: logical.UpdateOperation,
+		Path: "sign-stream/testkey/start", ClientToken: "test-token",
+		Data: map[string]interface{}{"algorithm": "sha2-256", "format": "base64"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessionID := resp.Data["session_id"].(string)
+
+	// Send one update — should succeed
+	resp, err = b.HandleRequest(context.Background(), &logical.Request{
+		Storage: storage, Operation: logical.UpdateOperation,
+		Path: "sign-stream/testkey/update", ClientToken: "test-token",
+		Data: map[string]interface{}{"session_id": sessionID, "input": base64.StdEncoding.EncodeToString([]byte("data"))},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Delete the key
+	_, err = b.HandleRequest(context.Background(), &logical.Request{
+		Storage: storage, Operation: logical.DeleteOperation,
+		Path: "keys/testkey",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Update should now fail — session terminated
+	resp, _ = b.HandleRequest(context.Background(), &logical.Request{
+		Storage: storage, Operation: logical.UpdateOperation,
+		Path: "sign-stream/testkey/update", ClientToken: "test-token",
+		Data: map[string]interface{}{"session_id": sessionID, "input": base64.StdEncoding.EncodeToString([]byte("more"))},
+	})
+	if resp == nil || !resp.IsError() {
+		t.Fatal("expected error after key deletion")
+	}
+
+	// Finalize should also fail
+	resp, _ = b.HandleRequest(context.Background(), &logical.Request{
+		Storage: storage, Operation: logical.UpdateOperation,
+		Path: "sign-stream/testkey/finalize", ClientToken: "test-token",
+		Data: map[string]interface{}{"session_id": sessionID},
+	})
+	if resp == nil || !resp.IsError() {
+		t.Fatal("expected error on finalize after key deletion")
+	}
+}
+
+func TestGPG_DeleteKeyDoesNotAffectOtherKeySessions(t *testing.T) {
+	b := Backend()
+	b.streamSessions = newSessionStore()
+	storage := &logical.InmemStorage{}
+
+	// Create two keys
+	for _, name := range []string{"keyA", "keyB"} {
+		_, err := b.HandleRequest(context.Background(), &logical.Request{
+			Storage: storage, Operation: logical.UpdateOperation,
+			Path: "keys/" + name, ClientToken: "test-token",
+			Data: map[string]interface{}{"real_name": name},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Start sessions for both keys
+	respA, err := b.HandleRequest(context.Background(), &logical.Request{
+		Storage: storage, Operation: logical.UpdateOperation,
+		Path: "sign-stream/keyA/start", ClientToken: "test-token",
+		Data: map[string]interface{}{"algorithm": "sha2-256", "format": "base64"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sidA := respA.Data["session_id"].(string)
+
+	respB, err := b.HandleRequest(context.Background(), &logical.Request{
+		Storage: storage, Operation: logical.UpdateOperation,
+		Path: "sign-stream/keyB/start", ClientToken: "test-token",
+		Data: map[string]interface{}{"algorithm": "sha2-256", "format": "base64"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sidB := respB.Data["session_id"].(string)
+
+	// Delete keyA
+	_, err = b.HandleRequest(context.Background(), &logical.Request{
+		Storage: storage, Operation: logical.DeleteOperation,
+		Path: "keys/keyA",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// keyA session should be terminated
+	resp, _ := b.HandleRequest(context.Background(), &logical.Request{
+		Storage: storage, Operation: logical.UpdateOperation,
+		Path: "sign-stream/keyA/update", ClientToken: "test-token",
+		Data: map[string]interface{}{"session_id": sidA, "input": base64.StdEncoding.EncodeToString([]byte("data"))},
+	})
+	if resp == nil || !resp.IsError() {
+		t.Fatal("expected keyA session to be terminated")
+	}
+
+	// keyB session should still work
+	resp, err = b.HandleRequest(context.Background(), &logical.Request{
+		Storage: storage, Operation: logical.UpdateOperation,
+		Path: "sign-stream/keyB/update", ClientToken: "test-token",
+		Data: map[string]interface{}{"session_id": sidB, "input": base64.StdEncoding.EncodeToString([]byte("data"))},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.IsError() {
+		t.Fatal("keyB session should still work after keyA deletion")
+	}
+
+	// keyB finalize should succeed
+	resp, err = b.HandleRequest(context.Background(), &logical.Request{
+		Storage: storage, Operation: logical.UpdateOperation,
+		Path: "sign-stream/keyB/finalize", ClientToken: "test-token",
+		Data: map[string]interface{}{"session_id": sidB},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.IsError() {
+		t.Fatal("keyB finalize should succeed")
+	}
+}
