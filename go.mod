@@ -62,6 +62,6 @@ require (
 )
 
 replace (
-	github.com/openbao/openbao/api/v2 => ../openbao/api
-	github.com/openbao/openbao/sdk/v2 => ../openbao/sdk
+	github.com/openbao/openbao/api/v2 => ../openbao/openbao/api
+	github.com/openbao/openbao/sdk/v2 => ../openbao/openbao/sdk
 )
