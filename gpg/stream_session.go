@@ -227,27 +227,20 @@ func (s *sessionStore) cleanupSessionResources(sess *streamSession) {
 	}
 }
 
-// terminateSession cleans up resources for a session (closes pipes, etc).
+// terminateSession marks a session done under lock, then cleans up resources
+// without the lock held. This avoids holding sess.mu during potentially
+// blocking I/O (e.g. bpw.Close() waiting for the drain goroutine).
 func (s *sessionStore) terminateSession(sess *streamSession) {
 	sess.mu.Lock()
-	defer sess.mu.Unlock()
-
 	if sess.done {
+		sess.mu.Unlock()
 		return
 	}
 	sess.done = true
 	sess.err = fmt.Errorf("session expired")
+	sess.mu.Unlock()
 
-	switch sess.sessionType {
-	case sessionTypeEncrypt:
-		if sess.encrypt != nil && sess.encrypt.plainWriter != nil {
-			sess.encrypt.plainWriter.Close()
-		}
-	case sessionTypeDecrypt:
-		if sess.decrypt != nil && sess.decrypt.bpw != nil {
-			sess.decrypt.bpw.Close()
-		}
-	}
+	s.cleanupSessionResources(sess)
 }
 
 // terminateSessionsByKeyName terminates and removes all sessions that
