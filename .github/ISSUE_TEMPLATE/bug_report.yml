@@ -1,0 +1,50 @@
+name: Bug Report
+description: Report a bug in the GPG secrets plugin
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Security vulnerabilities must not be reported here.**
+        See [SECURITY.md](../blob/main/SECURITY.md) for responsible disclosure instructions.
+
+  - type: input
+    id: version
+    attributes:
+      label: Plugin version
+      description: Version or commit hash of the plugin
+      placeholder: "e.g., v0.1.0 or commit abc1234"
+    validations:
+      required: true
+
+  - type: input
+    id: openbao-version
+    attributes:
+      label: OpenBao version
+      description: Output of `bao version`
+      placeholder: "e.g., OpenBao v2.0.0"
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What happened? What did you expect?
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Exact commands or API calls to reproduce the issue
+      render: bash
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs or error output
+      render: text
