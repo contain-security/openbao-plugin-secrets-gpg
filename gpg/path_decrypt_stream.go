@@ -246,6 +246,7 @@ func (b *backend) pathDecryptStreamStartWrite(ctx context.Context, req *logical.
 
 	signerKeyName := resolveSignerKeyName(data)
 	hasSigner := signerKeyName != ""
+	var signerKeyId uint64
 	if hasSigner {
 		signerEntry, err := b.key(ctx, req.Storage, signerKeyName)
 		if err != nil {
@@ -259,6 +260,7 @@ func (b *backend) pathDecryptStreamStartWrite(ctx context.Context, req *logical.
 			return nil, err
 		}
 		keyring = append(keyring, signerEntity)
+		signerKeyId = signerEntity.PrimaryKey.KeyId
 	}
 
 	initialB64 := data.Get("data").(string)
@@ -285,10 +287,19 @@ func (b *backend) pathDecryptStreamStartWrite(ctx context.Context, req *logical.
 		inputPipeW:    inputPipeW,
 		goroutineDone: make(chan struct{}),
 		hasSigner:     hasSigner,
+		signerKeyId:   signerKeyId,
 	}
 
 	// Store the bufferedPipeWriter in a field we can access
 	// We'll use a closure to capture it for the goroutine.
+
+	cfg, err := b.streamConfig(ctx, req.Storage)
+	if err != nil {
+		bpw.Close()
+		inputPipeR.Close()
+		return nil, err
+	}
+	maxPlaintextSize := cfg.maxPlaintextSize
 
 	now := time.Now()
 	sess := &streamSession{
@@ -300,6 +311,7 @@ func (b *backend) pathDecryptStreamStartWrite(ctx context.Context, req *logical.
 		lastAccess:      now,
 		decrypt:         decState,
 	}
+	sess.applyLimits(cfg)
 
 	// Set bpw before creating the session so concurrent requests see it.
 	sess.decrypt.bpw = bpw
@@ -313,6 +325,8 @@ func (b *backend) pathDecryptStreamStartWrite(ctx context.Context, req *logical.
 	// Write initial ciphertext to the buffered pipe.
 	if _, err := bpw.Write(initialData); err != nil {
 		b.streamSessions.remove(sessionID)
+		bpw.Close()
+		inputPipeR.Close()
 		return nil, fmt.Errorf("failed to write initial ciphertext: %w", err)
 	}
 
@@ -332,6 +346,12 @@ func (b *backend) pathDecryptStreamStartWrite(ctx context.Context, req *logical.
 
 	go func() {
 		defer close(decState.goroutineDone)
+		// Close the read side when the goroutine exits. If it aborts early
+		// (e.g. the plaintext cap is exceeded) without draining the input pipe,
+		// this unblocks the bufferedPipeWriter's drain (its pw.Write would
+		// otherwise block forever with no reader), so a later finalize/Close
+		// does not deadlock.
+		defer inputPipeR.Close()
 
 		md, err := openpgp.ReadMessage(inputPipeR, keyring, nil, nil)
 		if err != nil {
@@ -344,27 +364,40 @@ func (b *backend) pathDecryptStreamStartWrite(ctx context.Context, req *logical.
 
 		readyOnce.Do(func() { close(readySignal) })
 
-		// Copy decrypted body to the output buffer with size limit.
-		// The limitedWriter wraps lw and refuses writes once the cap is hit,
-		// so no data beyond the limit is buffered or returned to the client.
-		limited := &limitedWriter{w: lw, remaining: defaultMaxPlaintextSize}
-		_, err = io.Copy(limited, md.UnverifiedBody)
-		if limited.exceeded {
-			decState.outputMu.Lock()
-			decState.goroutineErr = fmt.Errorf("decrypted plaintext exceeds maximum size")
-			decState.outputMu.Unlock()
-			return
+		// Copy decrypted body to the output buffer. When a plaintext cap is
+		// configured (> 0) it is enforced here as the decompression-bomb
+		// ceiling: the limitedWriter refuses writes once the cap is hit, so no
+		// data beyond the limit is buffered or returned to the client. A cap of
+		// 0 means unlimited, for cooperative large-archive streaming where the
+		// plaintext is drained chunk-by-chunk under client backpressure.
+		var copyErr error
+		if maxPlaintextSize > 0 {
+			limited := &limitedWriter{w: lw, remaining: maxPlaintextSize}
+			_, copyErr = io.Copy(limited, md.UnverifiedBody)
+			if limited.exceeded {
+				decState.outputMu.Lock()
+				decState.goroutineErr = fmt.Errorf("decrypted plaintext exceeds maximum size")
+				decState.outputMu.Unlock()
+				return
+			}
+		} else {
+			_, copyErr = io.Copy(lw, md.UnverifiedBody)
 		}
-		if err != nil {
+		if copyErr != nil {
 			decState.outputMu.Lock()
 			decState.goroutineErr = fmt.Errorf("decryption failed")
 			decState.outputMu.Unlock()
 			return
 		}
 
-		// Check signature after fully reading UnverifiedBody
+		// Check the signature after fully reading UnverifiedBody. The verdict is
+		// bound to the requested signer: a valid signature from any other key in
+		// the keyring (including the recipient's own key) does NOT satisfy it.
 		if hasSigner {
-			if !md.IsSigned || md.SignedBy == nil || md.SignatureError != nil {
+			sigOK := md.IsSigned && md.SignedBy != nil && md.SignatureError == nil &&
+				md.SignedBy.Entity != nil &&
+				md.SignedBy.Entity.PrimaryKey.KeyId == decState.signerKeyId
+			if !sigOK {
 				decState.outputMu.Lock()
 				decState.sigError = fmt.Errorf("signature verification failed")
 				decState.outputMu.Unlock()
@@ -403,7 +436,8 @@ func (b *backend) pathDecryptStreamStartWrite(ctx context.Context, req *logical.
 		"done":       false,
 	}
 	if hasSigner {
-		respData["signature_verified"] = false
+		respData["signature_valid"] = false
+		respData["signature_final"] = false
 	}
 
 	return &logical.Response{Data: respData}, nil
@@ -446,8 +480,8 @@ func (b *backend) pathDecryptStreamUpdateWrite(ctx context.Context, req *logical
 	if err != nil {
 		return logical.ErrorResponse("unable to decode data: invalid base64 encoding"), logical.ErrInvalidRequest
 	}
-	if len(input) > defaultMaxChunkSize {
-		return logical.ErrorResponse(fmt.Sprintf("chunk exceeds maximum size of %d bytes", defaultMaxChunkSize)), logical.ErrInvalidRequest
+	if int64(len(input)) > sess.maxChunkSize {
+		return logical.ErrorResponse(fmt.Sprintf("chunk exceeds maximum size of %d bytes", sess.maxChunkSize)), logical.ErrInvalidRequest
 	}
 
 	// Write ciphertext to the buffered pipe (non-blocking).
@@ -474,7 +508,8 @@ func (b *backend) pathDecryptStreamUpdateWrite(ctx context.Context, req *logical
 		"done":       false,
 	}
 	if sess.decrypt.hasSigner {
-		respData["signature_verified"] = false
+		respData["signature_valid"] = false
+		respData["signature_final"] = false
 	}
 
 	return &logical.Response{Data: respData}, nil
@@ -536,6 +571,10 @@ func (b *backend) pathDecryptStreamFinalizeWrite(ctx context.Context, req *logic
 
 	if sess.decrypt.hasSigner {
 		respData["signature_valid"] = sigError == nil
+		respData["signature_final"] = true
+		if sigError != nil {
+			respData["signature_error"] = sigError.Error()
+		}
 	}
 
 	b.streamSessions.remove(sessionID)
@@ -556,15 +595,18 @@ update responses is UNVERIFIED. The PGP signature is appended after the
 message body, so it cannot be checked until all data is read. The client
 MUST wait for the finalize response and check signature_valid before
 trusting or processing any of the received plaintext. Start and update
-responses include "signature_verified": false as a reminder.
+responses include "signature_valid": false and "signature_final": false as a
+reminder; the verdict is authoritative only once finalize returns
+"signature_final": true.
 `
 const pathDecryptStreamUpdateHelpSyn = "Feed a ciphertext chunk to a streaming decrypt session"
 const pathDecryptStreamUpdateHelpDesc = `
 Sends a base64-encoded ciphertext chunk to an active decryption session.
 Returns any decrypted plaintext available. Chunks must be sent sequentially.
 
-When a signer key is specified, responses include "signature_verified": false.
-Do not act on the plaintext until finalize confirms signature_valid is true.
+When a signer key is specified, responses include "signature_valid": false and
+"signature_final": false. Do not act on the plaintext until finalize returns
+"signature_final": true and confirms signature_valid is true.
 `
 const pathDecryptStreamFinalizeHelpSyn = "Finalize a streaming decrypt session"
 const pathDecryptStreamFinalizeHelpDesc = `
