@@ -178,6 +178,11 @@ func (b *backend) pathSignStreamStartWrite(ctx context.Context, req *logical.Req
 		return nil, err
 	}
 
+	streamCfg, err := b.streamConfig(ctx, req.Storage)
+	if err != nil {
+		return nil, err
+	}
+
 	now := time.Now()
 	sess := &streamSession{
 		id:              sessionID,
@@ -194,6 +199,7 @@ func (b *backend) pathSignStreamStartWrite(ctx context.Context, req *logical.Req
 			format:     format,
 		},
 	}
+	sess.applyLimits(streamCfg)
 
 	if err := b.streamSessions.create(sess); err != nil {
 		return logical.ErrorResponse("unable to create streaming session"), nil
@@ -236,10 +242,10 @@ func (b *backend) pathSignStreamUpdateWrite(ctx context.Context, req *logical.Re
 	if err != nil {
 		return logical.ErrorResponse("unable to decode input: invalid base64 encoding"), logical.ErrInvalidRequest
 	}
-	if len(input) > defaultMaxChunkSize {
-		return logical.ErrorResponse(fmt.Sprintf("chunk exceeds maximum size of %d bytes", defaultMaxChunkSize)), logical.ErrInvalidRequest
+	if int64(len(input)) > sess.maxChunkSize {
+		return logical.ErrorResponse(fmt.Sprintf("chunk exceeds maximum size of %d bytes", sess.maxChunkSize)), logical.ErrInvalidRequest
 	}
-	if sess.sign.bytesReceived+int64(len(input)) > defaultMaxStreamBytes {
+	if sess.maxStreamBytes > 0 && sess.sign.bytesReceived+int64(len(input)) > sess.maxStreamBytes {
 		return logical.ErrorResponse("streaming session byte limit exceeded"), logical.ErrInvalidRequest
 	}
 

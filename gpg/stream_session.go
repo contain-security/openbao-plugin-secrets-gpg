@@ -51,6 +51,16 @@ type streamSession struct {
 	err             error
 	mu              sync.Mutex
 
+	// Per-session limits resolved from the mount config at start time.
+	// A byte cap of 0 means "no limit"; timeout is always > 0. The session-
+	// count limits fall back to the store defaults when left at 0.
+	maxStreamBytes       int64
+	maxPlaintextSize     int64
+	maxChunkSize         int64
+	timeout              time.Duration
+	maxSessions          int
+	maxSessionsPerClient int
+
 	// Sign-specific fields are in signSession (embedded when sessionType == sessionTypeSign)
 	sign *signSessionState
 
@@ -93,6 +103,7 @@ type decryptSessionState struct {
 	goroutineErr  error
 	sigError      error  // set after finalize if signature check fails
 	hasSigner     bool
+	signerKeyId   uint64 // primary key id of the requested signer (when hasSigner)
 }
 
 // lockedWriter wraps a bytes.Buffer with a mutex for safe concurrent writes.
@@ -148,20 +159,32 @@ func (s *sessionStore) clientCounter(tokenHash string) *atomic.Int64 {
 }
 
 func (s *sessionStore) create(sess *streamSession) error {
+	// Effective limits: prefer the per-session values resolved from the mount
+	// config at start; fall back to the store defaults when unset (<= 0), which
+	// keeps sessions created directly (e.g. in tests) working.
+	maxSessions := sess.maxSessions
+	if maxSessions <= 0 {
+		maxSessions = s.maxSessions
+	}
+	maxPerClient := sess.maxSessionsPerClient
+	if maxPerClient <= 0 {
+		maxPerClient = s.maxSessionsPerClient
+	}
+
 	// Global limit: atomic increment-then-check.
 	newCount := s.sessionCount.Add(1)
-	if int(newCount) > s.maxSessions {
+	if int(newCount) > maxSessions {
 		s.sessionCount.Add(-1)
-		return fmt.Errorf("too many active streaming sessions (max %d)", s.maxSessions)
+		return fmt.Errorf("too many active streaming sessions (max %d)", maxSessions)
 	}
 
 	// Per-client limit: atomic increment-then-check on per-token counter.
 	counter := s.clientCounter(sess.clientTokenHash)
 	clientCount := counter.Add(1)
-	if int(clientCount) > s.maxSessionsPerClient {
+	if int(clientCount) > maxPerClient {
 		counter.Add(-1)
 		s.sessionCount.Add(-1)
-		return fmt.Errorf("too many active sessions for this client (max %d)", s.maxSessionsPerClient)
+		return fmt.Errorf("too many active sessions for this client (max %d)", maxPerClient)
 	}
 
 	s.sessions.Store(sess.id, sess)
@@ -194,7 +217,13 @@ func (s *sessionStore) cleanup() int {
 		// Hold sess.mu through the expiry check AND done marking so a
 		// concurrent update that refreshes lastAccess is not ignored.
 		sess.mu.Lock()
-		expired := now.Sub(sess.lastAccess) > s.timeout
+		// Prefer the per-session timeout (resolved from mount config at start);
+		// fall back to the store default for sessions created without one.
+		timeout := sess.timeout
+		if timeout <= 0 {
+			timeout = s.timeout
+		}
+		expired := now.Sub(sess.lastAccess) > timeout
 		if !expired || sess.done {
 			sess.mu.Unlock()
 			return true
