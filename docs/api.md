@@ -391,6 +391,17 @@ For encrypting data that exceeds the single-request size limit. Output is binary
 
 For decrypting data that exceeds the single-request size limit. The start request must contain enough ciphertext to include the PGP PKESK header.
 
+> **SECURITY — do not trust streamed plaintext until finalize.** A PGP
+> signature is appended *after* the message body, so it cannot be verified
+> until the whole stream has been read. Plaintext returned by `start` and
+> `update` is therefore **UNAUTHENTICATED**. A cooperative consumer MUST NOT
+> act on any received plaintext until the `finalize` response confirms
+> `done: true`, `signature_final: true`, and (when a `signer_key_name` was
+> given) `signature_valid: true`. If `finalize` errors, or `signature_valid`
+> is `false`, the consumer MUST discard **all** plaintext received during the
+> session. `start`/`update` responses carry `signature_valid: false` and
+> `signature_final: false` as a reminder that the verdict is not yet final.
+
 ### Start Decrypt Session
 
 | | |
@@ -414,6 +425,8 @@ For decrypting data that exceeds the single-request size limit. The start reques
 | `data` | string | Base64-encoded initial plaintext (may be empty) |
 | `sequence` | int | `0` |
 | `done` | bool | `false` |
+| `signature_valid` | bool | Only present if `signer_key_name` was set. Always `false` here — the verdict is not yet known |
+| `signature_final` | bool | Only present if `signer_key_name` was set. Always `false` here — the verdict is authoritative only when `true` (at finalize) |
 
 ---
 
@@ -439,6 +452,8 @@ For decrypting data that exceeds the single-request size limit. The start reques
 | `data` | string | Base64-encoded plaintext chunk (may be empty if processing is delayed) |
 | `sequence` | int | Incrementing sequence number |
 | `done` | bool | `false` |
+| `signature_valid` | bool | Only present if `signer_key_name` was set. Always `false` here — not yet known |
+| `signature_final` | bool | Only present if `signer_key_name` was set. Always `false` here |
 
 ---
 
@@ -463,22 +478,84 @@ For decrypting data that exceeds the single-request size limit. The start reques
 | `data` | string | Base64-encoded remaining plaintext |
 | `sequence` | int | Final sequence number |
 | `done` | bool | `true` |
-| `signature_valid` | bool | Only present if `signer_key_name` was set. `true` if valid |
+| `signature_final` | bool | Only present if `signer_key_name` was set. `true` — `signature_valid` is now authoritative |
+| `signature_valid` | bool | Only present if `signer_key_name` was set. `true` only if the message was signed **by the requested signer** and the signature is intact |
 | `signature_error` | string | Only present if signature verification failed |
 
-**Reassembly**: `base64_decode(start.data) + base64_decode(update[0].data) + ... + base64_decode(finalize.data)` = original plaintext.
+**Reassembly**: `base64_decode(start.data) + base64_decode(update[0].data) + ... + base64_decode(finalize.data)` = original plaintext. **Do not use the reassembled plaintext until this `finalize` response succeeds** (see the SECURITY note above): if it errors, or `signature_valid` is `false`, discard everything received.
+
+---
+
+## Configuration
+
+Mount-wide limits for the streaming sessions. All fields are optional; a field
+that is omitted keeps its current value (or the built-in default if never set).
+These settings affect only the **streaming** endpoints — the single-shot
+`/encrypt` and `/decrypt` paths keep a fixed in-memory bound.
+
+### Write Configuration
+
+| | |
+|---|---|
+| **Method** | `POST` |
+| **Path** | `/gpg/config` |
+
+**Parameters**
+
+| Name | Type | Default | Description |
+|---|---|---|---|
+| `max_stream_bytes` | int | 536870912 (512 MiB) | Max total input bytes per encrypt/sign session. `0` = unlimited |
+| `max_plaintext_size` | int | 33554432 (32 MiB) | Max decrypted plaintext per decrypt session (decompression-bomb ceiling). `0` = unlimited |
+| `max_chunk_size` | int | 4194304 (4 MiB) | Max size of a single decoded chunk. Must be > 0 |
+| `session_timeout_seconds` | int | 300 | Idle timeout before an inactive session is reaped. Must be > 0 |
+| `max_sessions` | int | 64 | Max concurrent sessions across the mount. Must be > 0 |
+| `max_sessions_per_client` | int | 4 | Max concurrent sessions per client token. Must be > 0 |
+
+The write returns the **effective** configuration (same shape as the read).
+
+**Example — enable unlimited large-archive streaming and a longer idle timeout:**
+
+```
+bao write gpg/config max_stream_bytes=0 max_plaintext_size=0 session_timeout_seconds=3600
+```
+
+### Read Configuration
+
+| | |
+|---|---|
+| **Method** | `GET` |
+| **Path** | `/gpg/config` |
+
+Returns the effective limits currently in force (defaults filled in).
+
+### Delete Configuration
+
+| | |
+|---|---|
+| **Method** | `DELETE` |
+| **Path** | `/gpg/config` |
+
+Removes all overrides, restoring the built-in defaults.
 
 ---
 
 ## Streaming Session Constraints
 
-| Constraint | Value |
-|---|---|
-| Max concurrent sessions | 64 |
-| Session idle timeout | 5 minutes |
-| Max chunk size (decoded) | 4 MB |
-| Session ID format | 32-character hex string |
-| Cleanup interval | 30 seconds |
+These are the **default** limits. The size caps, session idle timeout, and
+session counts are configurable per mount via the [`gpg/config`](#configuration)
+endpoint; a byte cap of `0` disables that limit (for cooperative large-archive
+streaming).
+
+| Constraint | Default | Config field |
+|---|---|---|
+| Max total input per encrypt/sign session | 512 MiB | `max_stream_bytes` (0 = unlimited) |
+| Max decrypted plaintext per decrypt session | 32 MiB | `max_plaintext_size` (0 = unlimited) |
+| Max chunk size (decoded) | 4 MiB | `max_chunk_size` |
+| Session idle timeout | 5 minutes | `session_timeout_seconds` |
+| Max concurrent sessions (mount) | 64 | `max_sessions` |
+| Max concurrent sessions per client | 4 | `max_sessions_per_client` |
+| Session ID format | 32-character hex string | — |
+| Cleanup interval | 30 seconds | — |
 
 **Important notes**:
 - Chunks must be sent **sequentially** (not in parallel)
