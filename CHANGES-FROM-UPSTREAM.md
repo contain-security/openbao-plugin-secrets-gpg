@@ -19,16 +19,20 @@ The upstream plugin had no encrypt endpoint. This port adds:
 | Method | Path | Description |
 |--------|------|-------------|
 | `POST` | `/gpg/encrypt/:name` | Encrypt plaintext to a named key |
+| `POST` | `/gpg/encrypt/:name/sign/:signer_name` | Encrypt and sign plaintext |
 
-Parameters: `plaintext` (base64), `format` (`base64` or `ascii-armor`), `signer_key_name` (optional, for sign+encrypt).
+Parameters: `plaintext` (base64) and `format` (`base64` or `ascii-armor`).
+The signed variant takes `signer_name` as a URL path parameter.
 
-## API Change: `signer_key` to `signer_key_name`
+## API Change: `signer_key` to `/sign/:signer_name`
 
-Both `/decrypt` and `/show-session-key` endpoints now use `signer_key_name` instead of the upstream's `signer_key` parameter.
+`/encrypt`, `/decrypt`, and `/show-session-key` endpoints now use a
+`/sign/:signer_name` URL segment instead of the upstream's `signer_key`
+parameter.
 
-| Upstream (`signer_key`) | This port (`signer_key_name`) |
-|--------------------------|-------------------------------|
-| Inline ASCII-armored public key in request body | Reference to a key stored in OpenBao by name |
+| Upstream (`signer_key`) | This port (`/sign/:signer_name`) |
+|--------------------------|--------------------------------|
+| Inline ASCII-armored public key in request body | URL reference to a key stored in OpenBao |
 
 **Rationale**: Keeps key material inside OpenBao rather than requiring clients to transmit public keys in API calls. Makes the API consistent across all endpoints.
 
@@ -57,7 +61,7 @@ See [docs/dev/design-decisions.md](docs/dev/design-decisions.md) for detailed ra
 |------|----------|-----------|
 | SDK | HashiCorp Vault SDK | OpenBao SDK v2 |
 | Entrypoint | `plugin.Serve` | `plugin.ServeMultiplex` |
-| `signer_key` param | Inline ASCII-armored public key | `signer_key_name` (stored key reference) |
+| `signer_key` param | Inline ASCII-armored public key | `/sign/:signer_name` URL segment |
 | `/encrypt` endpoint | Not present | Added |
 | Streaming endpoints | Not present | 9 new endpoints |
 | Session management | Not present | Full session store with cleanup |

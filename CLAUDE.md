@@ -4,7 +4,7 @@
 
 A GPG secrets engine plugin for [OpenBao](https://openbao.org), ported from [vault-gpg-plugin](https://github.com/LeSuisse/vault-gpg-plugin) by Thomas Gerbet (MIT license). Provides GPG key management and cryptographic operations (sign, verify, encrypt, decrypt) backed by OpenBao storage.
 
-**Status:** Phases 1-4 complete. Unit tests pass (20 tests). Integration cross-checks pass (11/11) against a live OpenBao instance with GnuPG interop.
+**Status:** Phases 1-4 complete. Unit tests pass. Shell integration tests under `tests/` exercise the HTTP API and GnuPG interop against a live OpenBao instance.
 
 ## Repository Layout
 
@@ -27,19 +27,11 @@ A GPG secrets engine plugin for [OpenBao](https://openbao.org), ported from [vau
 ├── scripts/
 │   ├── build.sh                  # Cross-compile linux/darwin amd64/arm64
 │   └── register.sh               # Register + mount plugin in OpenBao
-├── dist/                         # Build output (gitignored)
-├── LICENSE                       # MIT (upstream attribution included)
-├── test-bed/                     # Live test environment
-│   ├── openbao-instance/         # Dev server config, plugins dir, data, logs
-│   │   ├── config.hcl
-│   │   └── plugins/              # Plugin binary goes here
-│   ├── test-pgp-keys/            # Isolated GNUPGHOME with Alice + Bob keys
-│   │   ├── alice-{private,public}.asc
-│   │   └── bob-{private,public}.asc
-│   └── run-cross-checks.sh       # 11-check GnuPG interop test suite
-├── tests/                        # Shell-based integration tests
-│   ├── 01-key-crud.sh
-│   ├── 02-sign-verify.sh
+	├── dist/                         # Build output (gitignored)
+	├── LICENSE                       # MIT (upstream attribution included)
+	├── tests/                        # Shell-based integration tests
+	│   ├── 01-key-crud.sh
+	│   ├── 02-sign-verify.sh
 │   ├── 03-encrypt-decrypt.sh
 │   ├── 04-sign-stream.sh
 │   ├── 05-encrypt-stream.sh
@@ -68,10 +60,14 @@ A GPG secrets engine plugin for [OpenBao](https://openbao.org), ported from [vau
 ## API Changes from Upstream
 
 ### New endpoint: `/gpg/encrypt/:name`
-Encrypts plaintext to a named key. Parameters: `plaintext` (base64), `format` (base64|ascii-armor), `signer_key_name` (optional, for sign+encrypt).
+Encrypts plaintext to a named key. Parameters: `plaintext` (base64) and
+`format` (base64|ascii-armor). The signed variant is
+`/gpg/encrypt/:name/sign/:signer_name`.
 
-### Changed: `signer_key` -> `signer_key_name`
-Both `/decrypt` and `/show-session-key` now use `signer_key_name` (a reference to a key stored in OpenBao) instead of `signer_key` (inline ASCII-armored public key). This makes the API consistent with `/encrypt` and keeps key material inside OpenBao.
+### Changed: `signer_key` -> `/sign/:signer_name`
+`/encrypt`, `/decrypt`, and `/show-session-key` use a `/sign/:signer_name`
+URL segment to reference a key stored in OpenBao instead of accepting
+`signer_key` inline ASCII-armored public key material.
 
 **Implication:** To verify a signer, their key (with private key) must be stored in OpenBao. External public-only keys cannot currently be imported since key storage requires a private key.
 
@@ -90,18 +86,15 @@ bash scripts/build.sh v0.1.0    # outputs to dist/
 # Unit tests (no external dependencies)
 go test ./... -race -count=1
 
-# Integration cross-checks (requires running OpenBao + gpg)
-# 1. Start dev server:
-bash test-bed/start-dev.sh
+# Shell integration tests require a running OpenBao server with the plugin
+# registered and mounted at gpg/.
+# 1. Build the plugin and copy/register/mount it:
+go build -o /path/to/plugins/openbao-plugin-secrets-gpg .
 
-# 2. Register plugin:
 export BAO_ADDR=http://127.0.0.1:8200 BAO_TOKEN=root
-bash scripts/register.sh
+bash scripts/register.sh /path/to/plugins/openbao-plugin-secrets-gpg
 
-# 3. Run cross-checks:
-bash test-bed/run-cross-checks.sh
-
-# 4. Run shell integration tests:
+# 2. Run shell integration tests:
 bash tests/run-all.sh
 ```
 

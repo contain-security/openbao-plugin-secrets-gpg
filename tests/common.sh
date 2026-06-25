@@ -114,19 +114,19 @@ print_summary() {
 # Call these at the top of each test script (or via check_prerequisites).
 
 check_server() {
-    if ! curl -sf "$BAO_ADDR/v1/sys/health" >/dev/null 2>&1; then
-        echo "ERROR: OpenBao server not reachable at $BAO_ADDR"
-        echo "  Start it with: bash test-bed/start-dev.sh"
-        exit 1
-    fi
+	if ! curl -sf "$BAO_ADDR/v1/sys/health" >/dev/null 2>&1; then
+		echo "ERROR: OpenBao server not reachable at $BAO_ADDR"
+		echo "  Start OpenBao, then register the plugin with scripts/register.sh"
+		exit 1
+	fi
 }
 
 check_plugin() {
-    if ! "$BAO" secrets list 2>/dev/null | grep -q "^gpg/"; then
-        echo "ERROR: GPG plugin not mounted at gpg/"
-        echo "  Start the dev server with: bash test-bed/start-dev.sh"
-        exit 1
-    fi
+	if ! "$BAO" secrets list 2>/dev/null | grep -q "^gpg/"; then
+		echo "ERROR: GPG plugin not mounted at gpg/"
+		echo "  Register and mount it with: bash scripts/register.sh <binary>"
+		exit 1
+	fi
 }
 
 check_tools() {
