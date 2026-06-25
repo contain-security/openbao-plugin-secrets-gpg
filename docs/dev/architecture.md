@@ -46,8 +46,9 @@ All endpoints are registered as `framework.Path` entries in `Backend()`:
 | Decrypt | `decrypt/{name}` | `path_decrypt.go` |
 | Show Session Key | `show-session-key/{name}` | `path_show_session_key.go` |
 | Stream Sign | `sign-stream/{name}/start\|update\|finalize` | `path_sign_stream.go` |
-| Stream Encrypt | `encrypt-stream/{name}/start`, `encrypt-stream/session/{id}/update\|finalize` | `path_encrypt_stream.go` |
-| Stream Decrypt | `decrypt-stream/{name}/start`, `decrypt-stream/session/{id}/update\|finalize` | `path_decrypt_stream.go` |
+| Stream Config | `config` | `path_config_stream.go` |
+| Stream Encrypt | `encrypt-stream/{name}/start`, `encrypt-stream/{name}/update\|finalize` | `path_encrypt_stream.go` |
+| Stream Decrypt | `decrypt-stream/{name}/start`, `decrypt-stream/{name}/update\|finalize` | `path_decrypt_stream.go` |
 
 ## Key Storage
 
@@ -179,7 +180,7 @@ No data transits external systems. Key material never leaves the plugin process 
 |---|---|---|
 | SDK | HashiCorp Vault SDK | OpenBao SDK v2 |
 | Entrypoint | `plugin.Serve` | `plugin.ServeMultiplex` |
-| `signer_key` param | Inline ASCII-armored public key | `signer_key_name` (reference to stored key) |
+| `signer_key` param | Inline ASCII-armored public key | `sign/{signer_name}` URL segment referencing a stored key |
 | `/encrypt` endpoint | Not present | Added |
 | Streaming endpoints | Not present | 9 new endpoints (sign/encrypt/decrypt) |
 | Session management | Not present | Full session store with cleanup |

@@ -156,15 +156,16 @@ Encrypts data to a named key. Produces a standard PGP message.
 |---|---|
 | **Method** | `POST` |
 | **Path** | `/gpg/encrypt/:name` |
+| **Signed variant** | `/gpg/encrypt/:name/sign/:signer_name` |
 
 **Parameters**
 
 | Name | Type | Default | Description |
 |---|---|---|---|
 | `name` | string | required | Recipient key name |
+| `signer_name` | string | | Signing key name, only in the signed-variant URL path |
 | `plaintext` | string | required | Base64-encoded plaintext |
 | `format` | string | `base64` | Output format: `base64` or `ascii-armor` |
-| `signer_key_name` | string | | Optional signing key for sign+encrypt |
 
 **Response**
 
@@ -182,15 +183,16 @@ Decrypts a PGP message using a named key.
 |---|---|
 | **Method** | `POST` |
 | **Path** | `/gpg/decrypt/:name` |
+| **Verify-signed variant** | `/gpg/decrypt/:name/sign/:signer_name` |
 
 **Parameters**
 
 | Name | Type | Default | Description |
 |---|---|---|---|
 | `name` | string | required | Recipient key name (must have private key) |
+| `signer_name` | string | | Signer key name to verify against, only in the verify-signed URL path. If set, the message must be signed by this exact key |
 | `ciphertext` | string | required | Encrypted message |
 | `format` | string | `base64` | Ciphertext format: `base64` or `ascii-armor` |
-| `signer_key_name` | string | | Key name to verify sender signature. If set, signature must be valid |
 
 **Response**
 
@@ -208,15 +210,16 @@ Extracts the symmetric session key from an encrypted message without decrypting 
 |---|---|
 | **Method** | `POST` |
 | **Path** | `/gpg/show-session-key/:name` |
+| **Signer-keyring variant** | `/gpg/show-session-key/:name/sign/:signer_name` |
 
 **Parameters**
 
 | Name | Type | Default | Description |
 |---|---|---|---|
 | `name` | string | required | Recipient key name |
+| `signer_name` | string | | Optional extra signer key name, only in the signer-keyring URL path |
 | `ciphertext` | string | required | Encrypted message |
 | `format` | string | `base64` | Ciphertext format: `base64` or `ascii-armor` |
-| `signer_key_name` | string | | Optional signer key for verification |
 
 **Response**
 
@@ -271,7 +274,7 @@ Feed a data chunk to the signing session.
 |---|---|---|---|
 | `name` | string | required | Signing key name (must match session) |
 | `session_id` | string | required | Session ID from start |
-| `input` | string | required | Base64-encoded data chunk (max 4MB decoded) |
+| `input` | string | required | Base64-encoded data chunk (default max 4 MiB decoded; configurable via `max_chunk_size`) |
 
 **Response**
 
@@ -317,13 +320,14 @@ For encrypting data that exceeds the single-request size limit. Output is binary
 |---|---|
 | **Method** | `POST` |
 | **Path** | `/gpg/encrypt-stream/:name/start` |
+| **Signed variant** | `/gpg/encrypt-stream/:name/sign/:signer_name/start` |
 
 **Parameters**
 
 | Name | Type | Default | Description |
 |---|---|---|---|
 | `name` | string | required | Recipient key name |
-| `signer_key_name` | string | | Optional signing key |
+| `signer_name` | string | | Signing key name, only in the signed-variant URL path |
 
 **Response**
 
@@ -341,14 +345,15 @@ For encrypting data that exceeds the single-request size limit. Output is binary
 | | |
 |---|---|
 | **Method** | `POST` |
-| **Path** | `/gpg/encrypt-stream/session/:session_id/update` |
+| **Path** | `/gpg/encrypt-stream/:name/update` |
 
 **Parameters**
 
 | Name | Type | Default | Description |
 |---|---|---|---|
-| `session_id` | string | required | Session ID (path parameter) |
-| `data` | string | required | Base64-encoded plaintext chunk (max 4MB decoded) |
+| `name` | string | required | Recipient key name (must match session) |
+| `session_id` | string | required | Session ID returned from start |
+| `data` | string | required | Base64-encoded plaintext chunk (default max 4 MiB decoded; configurable via `max_chunk_size`) |
 
 **Response**
 
@@ -366,13 +371,14 @@ For encrypting data that exceeds the single-request size limit. Output is binary
 | | |
 |---|---|
 | **Method** | `POST` |
-| **Path** | `/gpg/encrypt-stream/session/:session_id/finalize` |
+| **Path** | `/gpg/encrypt-stream/:name/finalize` |
 
 **Parameters**
 
 | Name | Type | Default | Description |
 |---|---|---|---|
-| `session_id` | string | required | Session ID (path parameter) |
+| `name` | string | required | Recipient key name (must match session) |
+| `session_id` | string | required | Session ID returned from start |
 
 **Response**
 
@@ -396,7 +402,7 @@ For decrypting data that exceeds the single-request size limit. The start reques
 > until the whole stream has been read. Plaintext returned by `start` and
 > `update` is therefore **UNAUTHENTICATED**. A cooperative consumer MUST NOT
 > act on any received plaintext until the `finalize` response confirms
-> `done: true`, `signature_final: true`, and (when a `signer_key_name` was
+> `done: true`, `signature_final: true`, and (when a `signer_name` was
 > given) `signature_valid: true`. If `finalize` errors, or `signature_valid`
 > is `false`, the consumer MUST discard **all** plaintext received during the
 > session. `start`/`update` responses carry `signature_valid: false` and
@@ -408,14 +414,15 @@ For decrypting data that exceeds the single-request size limit. The start reques
 |---|---|
 | **Method** | `POST` |
 | **Path** | `/gpg/decrypt-stream/:name/start` |
+| **Verify-signed variant** | `/gpg/decrypt-stream/:name/sign/:signer_name/start` |
 
 **Parameters**
 
 | Name | Type | Default | Description |
 |---|---|---|---|
 | `name` | string | required | Recipient key name |
-| `data` | string | required | Base64-encoded initial ciphertext (must contain PKESK header) |
-| `signer_key_name` | string | | Optional signer key for verification |
+| `signer_name` | string | | Signer key name to verify against, only in the verify-signed URL path |
+| `data` | string | required | Base64-encoded initial ciphertext chunk (must contain PKESK header; default max 4 MiB decoded, configurable via `max_chunk_size`) |
 
 **Response**
 
@@ -425,8 +432,8 @@ For decrypting data that exceeds the single-request size limit. The start reques
 | `data` | string | Base64-encoded initial plaintext (may be empty) |
 | `sequence` | int | `0` |
 | `done` | bool | `false` |
-| `signature_valid` | bool | Only present if `signer_key_name` was set. Always `false` here — the verdict is not yet known |
-| `signature_final` | bool | Only present if `signer_key_name` was set. Always `false` here — the verdict is authoritative only when `true` (at finalize) |
+| `signature_valid` | bool | Only present if `signer_name` was set. Always `false` here — the verdict is not yet known |
+| `signature_final` | bool | Only present if `signer_name` was set. Always `false` here — the verdict is authoritative only when `true` (at finalize) |
 
 ---
 
@@ -435,14 +442,15 @@ For decrypting data that exceeds the single-request size limit. The start reques
 | | |
 |---|---|
 | **Method** | `POST` |
-| **Path** | `/gpg/decrypt-stream/session/:session_id/update` |
+| **Path** | `/gpg/decrypt-stream/:name/update` |
 
 **Parameters**
 
 | Name | Type | Default | Description |
 |---|---|---|---|
-| `session_id` | string | required | Session ID (path parameter) |
-| `data` | string | required | Base64-encoded ciphertext chunk (max 4MB decoded) |
+| `name` | string | required | Recipient key name (must match session) |
+| `session_id` | string | required | Session ID returned from start |
+| `data` | string | required | Base64-encoded ciphertext chunk (default max 4 MiB decoded; configurable via `max_chunk_size`) |
 
 **Response**
 
@@ -452,8 +460,8 @@ For decrypting data that exceeds the single-request size limit. The start reques
 | `data` | string | Base64-encoded plaintext chunk (may be empty if processing is delayed) |
 | `sequence` | int | Incrementing sequence number |
 | `done` | bool | `false` |
-| `signature_valid` | bool | Only present if `signer_key_name` was set. Always `false` here — not yet known |
-| `signature_final` | bool | Only present if `signer_key_name` was set. Always `false` here |
+| `signature_valid` | bool | Only present if `signer_name` was set. Always `false` here — not yet known |
+| `signature_final` | bool | Only present if `signer_name` was set. Always `false` here |
 
 ---
 
@@ -462,13 +470,14 @@ For decrypting data that exceeds the single-request size limit. The start reques
 | | |
 |---|---|
 | **Method** | `POST` |
-| **Path** | `/gpg/decrypt-stream/session/:session_id/finalize` |
+| **Path** | `/gpg/decrypt-stream/:name/finalize` |
 
 **Parameters**
 
 | Name | Type | Default | Description |
 |---|---|---|---|
-| `session_id` | string | required | Session ID (path parameter) |
+| `name` | string | required | Recipient key name (must match session) |
+| `session_id` | string | required | Session ID returned from start |
 
 **Response**
 
@@ -478,8 +487,8 @@ For decrypting data that exceeds the single-request size limit. The start reques
 | `data` | string | Base64-encoded remaining plaintext |
 | `sequence` | int | Final sequence number |
 | `done` | bool | `true` |
-| `signature_final` | bool | Only present if `signer_key_name` was set. `true` — `signature_valid` is now authoritative |
-| `signature_valid` | bool | Only present if `signer_key_name` was set. `true` only if the message was signed **by the requested signer** and the signature is intact |
+| `signature_final` | bool | Only present if `signer_name` was set. `true` — `signature_valid` is now authoritative |
+| `signature_valid` | bool | Only present if `signer_name` was set. `true` only if the message was signed **by the requested signer** and the signature is intact |
 | `signature_error` | string | Only present if signature verification failed |
 
 **Reassembly**: `base64_decode(start.data) + base64_decode(update[0].data) + ... + base64_decode(finalize.data)` = original plaintext. **Do not use the reassembled plaintext until this `finalize` response succeeds** (see the SECURITY note above): if it errors, or `signature_valid` is `false`, discard everything received.
@@ -488,10 +497,12 @@ For decrypting data that exceeds the single-request size limit. The start reques
 
 ## Configuration
 
-Mount-wide limits for the streaming sessions. All fields are optional; a field
-that is omitted keeps its current value (or the built-in default if never set).
-These settings affect only the **streaming** endpoints — the single-shot
-`/encrypt` and `/decrypt` paths keep a fixed in-memory bound.
+Mount-wide limits for the streaming sessions. Configure these after the secrets
+engine is mounted by writing to the mount's `config` endpoint; they are not
+`bao secrets enable` options. All fields are optional; a field that is omitted
+keeps its current value (or the built-in default if never set). These settings
+affect only the **streaming** endpoints — the single-shot `/encrypt` and
+`/decrypt` paths keep a fixed in-memory bound.
 
 ### Write Configuration
 

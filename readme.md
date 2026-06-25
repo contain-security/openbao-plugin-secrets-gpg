@@ -22,7 +22,7 @@ Key differences from vault-gpg-plugin:
 | Platform | HashiCorp Vault | OpenBao |
 | `/encrypt` endpoint | Not present | Added |
 | Streaming endpoints | Not present | 9 new endpoints |
-| `signer_key` param | Inline ASCII-armored key | `signer_key_name` (stored key reference) |
+| `signer_key` param | Inline ASCII-armored key | `/sign/:signer_name` URL segment referencing a stored key |
 
 See [CHANGES-FROM-UPSTREAM.md](CHANGES-FROM-UPSTREAM.md) for the full list.
 

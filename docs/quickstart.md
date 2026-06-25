@@ -2,28 +2,47 @@
 
 ## Prerequisites
 
-- OpenBao server (v2.0+) running and unsealed
-- `bao` CLI configured (`BAO_ADDR` and `BAO_TOKEN` set)
-- Plugin binary built and placed in the plugin directory
+*   OpenBao server (v2.0+) running and unsealed
+*   `bao` CLI configured (`BAO_ADDR` and `BAO_TOKEN` set)
+*   Plugin binary built and placed in the plugin directory
 
-## 1. Build the Plugin
+## 1\. Build the Plugin
 
-```bash
+```
 cd openbao-plugin-secrets-gpg
 go build -o /path/to/plugins/openbao-plugin-secrets-gpg .
 ```
 
-## 2. Register and Mount
+## 2\. Register and Mount
 
-```bash
+```
 SHA=$(sha256sum /path/to/plugins/openbao-plugin-secrets-gpg | awk '{print $1}')
 bao plugin register -sha256=$SHA secret openbao-plugin-secrets-gpg
 bao secrets enable -path=gpg -plugin-name=openbao-plugin-secrets-gpg plugin
 ```
 
-## 3. Create a Key
+## 3\. Optional: Configure Streaming Limits
 
-```bash
+The streaming limits are configured after the mount is enabled through the
+mount's `config` endpoint. If you only stream small files, the defaults are fine.
+For large archive streams, raise or disable the byte caps and increase the idle
+timeout to tolerate pauses between chunks.
+
+```
+# Example: allow very large cooperative streams and tolerate 1 hour stalls.
+bao write gpg/config \
+    max_stream_bytes=0 \
+    max_plaintext_size=0 \
+    session_timeout_seconds=3600
+
+# If you want to keep the decrypt decompression-bomb guard, use a finite value
+# instead of max_plaintext_size=0, e.g. 70 GiB:
+# bao write gpg/config max_plaintext_size=75161927680
+```
+
+## 4\. Create a Key
+
+```
 bao write gpg/keys/my-key \
     real_name="My Application" \
     email="app@example.com" \
@@ -34,13 +53,13 @@ bao write gpg/keys/my-key \
 
 Verify the key was created:
 
-```bash
+```
 bao read gpg/keys/my-key
 ```
 
-## 4. Sign Data
+## 5\. Sign Data
 
-```bash
+```
 # Encode the data
 INPUT=$(echo -n "Hello, World!" | base64)
 
@@ -50,9 +69,9 @@ bao write -field=signature gpg/sign/my-key \
     format=ascii-armor
 ```
 
-## 5. Verify a Signature
+## 6\. Verify a Signature
 
-```bash
+```
 INPUT=$(echo -n "Hello, World!" | base64)
 SIGNATURE="-----BEGIN PGP SIGNATURE----- ..."
 
@@ -62,9 +81,9 @@ bao write -field=valid gpg/verify/my-key \
     format=ascii-armor
 ```
 
-## 6. Encrypt Data
+## 7\. Encrypt Data
 
-```bash
+```
 PLAINTEXT=$(echo -n "Secret message" | base64)
 
 bao write -field=ciphertext gpg/encrypt/my-key \
@@ -72,9 +91,9 @@ bao write -field=ciphertext gpg/encrypt/my-key \
     format=ascii-armor
 ```
 
-## 7. Decrypt Data
+## 8\. Decrypt Data
 
-```bash
+```
 bao write -field=plaintext gpg/decrypt/my-key \
     ciphertext="$CIPHERTEXT" \
     format=ascii-armor
@@ -82,11 +101,11 @@ bao write -field=plaintext gpg/decrypt/my-key \
 
 The plaintext is returned as base64. Decode with: `echo "$RESULT" | base64 -d`
 
-## 8. Sign a Large File (Streaming)
+## 9\. Sign a Large File (Streaming)
 
 For files exceeding 24MB, use the streaming endpoints:
 
-```bash
+```
 # Start a signing session
 SESSION=$(bao write -format=json gpg/sign-stream/my-key/start \
     algorithm=sha2-256 format=ascii-armor | jq -r '.data.session_id')
@@ -107,9 +126,9 @@ bao write -field=signature gpg/sign-stream/my-key/finalize \
 gpg --verify firmware.sig firmware.bin
 ```
 
-## 9. Encrypt a Large File (Streaming)
+## 10\. Encrypt a Large File (Streaming)
 
-```bash
+```
 # Start
 START=$(bao write -force -format=json gpg/encrypt-stream/my-key/start)
 SESSION=$(echo "$START" | jq -r '.data.session_id')
@@ -119,22 +138,23 @@ echo -n "$(echo "$START" | jq -r '.data.data')" | base64 -d > output.gpg
 split -b 4M largefile.bin /tmp/chunk_
 for chunk in /tmp/chunk_*; do
     base64 -w0 "$chunk" > /tmp/chunk.b64
-    RESP=$(bao write -format=json "gpg/encrypt-stream/session/$SESSION/update" \
-        data=@/tmp/chunk.b64)
+    RESP=$(bao write -format=json gpg/encrypt-stream/my-key/update \
+        session_id="$SESSION" data=@/tmp/chunk.b64)
     echo -n "$(echo "$RESP" | jq -r '.data.data')" | base64 -d >> output.gpg
 done
 
 # Finalize
-FIN=$(bao write -force -format=json "gpg/encrypt-stream/session/$SESSION/finalize")
+FIN=$(bao write -format=json gpg/encrypt-stream/my-key/finalize \
+    session_id="$SESSION")
 echo -n "$(echo "$FIN" | jq -r '.data.data')" | base64 -d >> output.gpg
 
 # Decrypt with gpg
 gpg --decrypt output.gpg > recovered.bin
 ```
 
-## 10. Import an Existing Key
+## 11\. Import an Existing Key
 
-```bash
+```
 bao write gpg/keys/imported-key \
     generate=false \
     key=@/path/to/private-key.asc \
@@ -145,7 +165,7 @@ bao write gpg/keys/imported-key \
 
 All signatures and encrypted messages produced by this plugin are standard PGP format and can be processed by GnuPG:
 
-```bash
+```
 # Export the public key for GnuPG use
 bao read -field=public_key gpg/keys/my-key | gpg --import
 

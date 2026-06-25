@@ -165,8 +165,8 @@ func TestStreamConfig_WriteMergeAndDelete(t *testing.T) {
 
 	// Set only two fields; the rest must stay at defaults.
 	if _, err := writeStreamConfig(t, b, storage, map[string]interface{}{
-		"max_stream_bytes":   0, // unlimited
-		"max_chunk_size":     1024,
+		"max_stream_bytes": 0, // unlimited
+		"max_chunk_size":   1024,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -256,6 +256,27 @@ func TestStreamConfig_ChunkCapEnforced(t *testing.T) {
 	})
 	if err == nil && (resp == nil || !resp.IsError()) {
 		t.Fatal("expected chunk-size cap to reject a 16-byte chunk when max_chunk_size=8")
+	}
+}
+
+func TestStreamConfig_DecryptStartChunkCapEnforced(t *testing.T) {
+	b := Backend()
+	storage := &logical.InmemStorage{}
+	mustCreateKey(t, b, storage, "k", "k@example.com")
+
+	if _, err := writeStreamConfig(t, b, storage, map[string]interface{}{"max_chunk_size": 8}); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Storage: storage, Operation: logical.UpdateOperation, Path: "decrypt-stream/k/start", ClientToken: "test-token",
+		Data: map[string]interface{}{"data": base64.StdEncoding.EncodeToString(make([]byte, 16))},
+	})
+	if err == nil && (resp == nil || !resp.IsError()) {
+		t.Fatal("expected decrypt start to enforce max_chunk_size on the initial chunk")
+	}
+	if b.streamSessions.sessionCount.Load() != 0 {
+		t.Fatalf("decrypt start chunk-cap rejection leaked a session; count=%d", b.streamSessions.sessionCount.Load())
 	}
 }
 

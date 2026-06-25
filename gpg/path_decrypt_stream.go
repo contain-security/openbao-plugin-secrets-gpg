@@ -301,6 +301,14 @@ func (b *backend) pathDecryptStreamStartWrite(ctx context.Context, req *logical.
 	}
 	maxPlaintextSize := cfg.maxPlaintextSize
 
+	// Enforce the per-chunk cap on the initial ciphertext too, for consistency
+	// with the update endpoint (the initial data is just the first chunk).
+	if int64(len(initialData)) > cfg.maxChunkSize {
+		bpw.Close()
+		inputPipeR.Close()
+		return logical.ErrorResponse(fmt.Sprintf("chunk exceeds maximum size of %d bytes", cfg.maxChunkSize)), logical.ErrInvalidRequest
+	}
+
 	now := time.Now()
 	sess := &streamSession{
 		id:              sessionID,
