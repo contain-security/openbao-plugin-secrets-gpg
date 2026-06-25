@@ -99,9 +99,9 @@ Non-streaming endpoints continue to support both `base64` and `ascii-armor` form
 
 ---
 
-## 8. `signer_key_name` vs. `signer_key` (Upstream Change)
+## 8. Stored signer key reference vs. inline `signer_key` (Upstream Change)
 
-**Decision**: Replace inline `signer_key` (ASCII-armored public key in the request) with `signer_key_name` (a reference to a key stored in OpenBao).
+**Decision**: Replace inline `signer_key` (ASCII-armored public key in the request) with a `/sign/:signer_name` URL segment that references a key stored in OpenBao.
 
 **Rationale**:
 - Consistent API: all endpoints reference keys by name, not inline material

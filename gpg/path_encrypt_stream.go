@@ -175,6 +175,12 @@ func (b *backend) pathEncryptStreamStartWrite(ctx context.Context, req *logical.
 	// there's no background goroutine.
 	close(encState.goroutineDone)
 
+	cfg, err := b.streamConfig(ctx, req.Storage)
+	if err != nil {
+		plainWriter.Close()
+		return nil, err
+	}
+
 	now := time.Now()
 	sess := &streamSession{
 		id:              sessionID,
@@ -185,6 +191,7 @@ func (b *backend) pathEncryptStreamStartWrite(ctx context.Context, req *logical.
 		lastAccess:      now,
 		encrypt:         encState,
 	}
+	sess.applyLimits(cfg)
 
 	if err := b.streamSessions.create(sess); err != nil {
 		// Clean up
@@ -237,10 +244,10 @@ func (b *backend) pathEncryptStreamUpdateWrite(ctx context.Context, req *logical
 	if err != nil {
 		return logical.ErrorResponse("unable to decode data: invalid base64 encoding"), logical.ErrInvalidRequest
 	}
-	if len(input) > defaultMaxChunkSize {
-		return logical.ErrorResponse(fmt.Sprintf("chunk exceeds maximum size of %d bytes", defaultMaxChunkSize)), logical.ErrInvalidRequest
+	if int64(len(input)) > sess.maxChunkSize {
+		return logical.ErrorResponse(fmt.Sprintf("chunk exceeds maximum size of %d bytes", sess.maxChunkSize)), logical.ErrInvalidRequest
 	}
-	if sess.encrypt.totalBytesIn+int64(len(input)) > defaultMaxStreamBytes {
+	if sess.maxStreamBytes > 0 && sess.encrypt.totalBytesIn+int64(len(input)) > sess.maxStreamBytes {
 		return logical.ErrorResponse("streaming session byte limit exceeded"), logical.ErrInvalidRequest
 	}
 	sess.encrypt.totalBytesIn += int64(len(input))

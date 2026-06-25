@@ -475,7 +475,7 @@ This is equivalent to `gpg --show-session-key` and is useful for law-enforcement
 
 ### 4.6 — `path_encrypt.go` — NEW: PGP Message Encryption
 
-**Endpoint:** `POST /gpg/encrypt/:name`
+**Endpoint:** `POST /gpg/encrypt/:name` or `POST /gpg/encrypt/:name/sign/:signer_name`
 
 This endpoint did not exist in the upstream plugin and is being added in this port.
 
@@ -483,9 +483,9 @@ This endpoint did not exist in the upstream plugin and is being added in this po
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
+| `signer_name` | string | "" | Name of another GPG key in OpenBao to sign with; URL path parameter on the `/sign/:signer_name` variant |
 | `plaintext` | string | required | Base64-encoded plaintext to encrypt |
 | `format` | string | "base64" | Output format: "base64" or "ascii-armor" |
-| `signer_key_name` | string | "" | Name of another GPG key in OpenBao to sign with (optional) |
 
 **Returns:** `{ "ciphertext": "<base64 or ascii-armor PGP message>" }`
 
@@ -576,8 +576,8 @@ func testBackend(t *testing.T) (logical.Backend, logical.Storage) {
 |---------|-------------|-------|----------|
 | P4-T-EN1 | Encrypt + decrypt round-trip (internal) | Encrypt via plugin; decrypt via plugin | Plaintext recovered |
 | P4-T-EN2 | Encrypt via plugin, decrypt with gpg | Encrypt via plugin (ascii-armor); import key to gpg; `gpg --decrypt` | `gpg` recovers plaintext |
-| P4-T-EN3 | Encrypt with signing | `signer_key_name=signing-key`; decrypt without signer check | Plaintext recovered |
-| P4-T-EN4 | Encrypt with signing, verify signer | Encrypt with sign; decrypt with `signer_key` check | Plaintext + signature verified |
+| P4-T-EN3 | Encrypt with signing | `POST /gpg/encrypt/:name/sign/signing-key`; decrypt without signer check | Plaintext recovered |
+| P4-T-EN4 | Encrypt with signing, verify signer | Encrypt with sign; decrypt with `/sign/:signer_name` check | Plaintext + signature verified |
 | P4-T-EN5 | Non-exportable key encrypt | Encrypt to a non-exportable key | Ciphertext returned (encrypt requires only public key, must work regardless of exportable flag) |
 | P4-T-EN6 | base64 output format | `format=base64` | Ciphertext is valid base64 binary PGP |
 | P4-T-EN7 | ascii-armor output | `format=ascii-armor` | Ciphertext starts with `-----BEGIN PGP MESSAGE-----` |
@@ -841,4 +841,3 @@ jobs:
 | Rekor integration breaks with network-off CI | Medium | Mock Rekor endpoint in unit tests; guard integration tests with build tag |
 | Private key storage format change | Low | Define serialization version field in storage schema from day one |
 | Concurrent key write race | Low | Use `framework.Backend`'s built-in locking via `b.lock` mutex on write paths |
-

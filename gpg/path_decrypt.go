@@ -104,6 +104,7 @@ func (b *backend) pathDecryptWrite(ctx context.Context, req *logical.Request, da
 	}
 
 	signerKeyName := resolveSignerKeyName(data)
+	var signerEntity *openpgp.Entity
 	if signerKeyName != "" {
 		signerEntry, err := b.key(ctx, req.Storage, signerKeyName)
 		if err != nil {
@@ -112,7 +113,7 @@ func (b *backend) pathDecryptWrite(ctx context.Context, req *logical.Request, da
 		if signerEntry == nil {
 			return logical.ErrorResponse("signer key not found"), logical.ErrInvalidRequest
 		}
-		signerEntity, err := b.entity(signerEntry)
+		signerEntity, err = b.entity(signerEntry)
 		if err != nil {
 			return nil, err
 		}
@@ -150,8 +151,16 @@ func (b *backend) pathDecryptWrite(ctx context.Context, req *logical.Request, da
 		return logical.ErrorResponse("decryption failed"), logical.ErrInvalidRequest
 	}
 
-	if signerKeyName != "" && (!md.IsSigned || md.SignedBy == nil || md.SignatureError != nil) {
-		return logical.ErrorResponse("signature verification failed"), nil
+	// Bind the signature verdict to the requested signer: a valid signature from
+	// any other key in the keyring (including the recipient's own key) does NOT
+	// satisfy the request.
+	if signerKeyName != "" {
+		sigOK := md.IsSigned && md.SignedBy != nil && md.SignatureError == nil &&
+			md.SignedBy.Entity != nil &&
+			md.SignedBy.Entity.PrimaryKey.KeyId == signerEntity.PrimaryKey.KeyId
+		if !sigOK {
+			return logical.ErrorResponse("signature verification failed"), nil
+		}
 	}
 
 	return &logical.Response{

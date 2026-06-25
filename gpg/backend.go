@@ -46,6 +46,7 @@ func Backend() *backend {
 			pathEncrypt(&b),
 			pathEncryptWithSigner(&b),
 			pathConfig(&b),
+			pathStreamConfig(&b),
 			// Streaming sign
 			pathSignStreamStart(&b),
 			pathSignStreamUpdate(&b),
