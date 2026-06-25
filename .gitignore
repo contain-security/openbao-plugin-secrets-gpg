@@ -1,5 +1,8 @@
 # Claude Code workspace
 .claude/
+.serena
+.understand-anything
+graphify-out
 
 # Plugin build output
 dist/
